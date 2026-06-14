@@ -174,13 +174,15 @@ table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
 }
 /* keep coloured fills when printing (otherwise the PDF prints all white) */
 .page,.page *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
-.page .head{display:grid;grid-template-columns:1.15fr 1.4fr .9fr;align-items:center;gap:0;padding-bottom:12px;}
-.page .head>div{padding:0 22px;}
+.page .head{display:grid;grid-template-columns:1.05fr 1.35fr .85fr .7fr;align-items:center;gap:0;padding-bottom:12px;}
+.page .head>div{padding:0 20px;}
 .page .head>div:first-child{padding-left:0;}
 .page .head>div:last-child{padding-right:0;}
+.page .head-tuv{display:flex;align-items:center;justify-content:flex-end;}
+.page .head-tuv .head-tuv-img{height:62px;width:auto;display:block;opacity:.9;}
 .page .col-div{border-left:1px solid var(--line-strong);}
 .page .logo-img{height:50px;width:auto;display:block;}
-.page .doc-title{font-weight:600;font-size:21px;letter-spacing:.1em;color:var(--ink);line-height:1.05;white-space:nowrap;}
+.page .doc-title{font-weight:600;font-size:19px;letter-spacing:.08em;color:var(--ink);line-height:1.1;}
 .page .doc-rule{width:34px;height:3px;background:var(--olive);margin:11px 0;border-radius:2px;}
 .page .doc-ref{font-size:15px;color:#555;}
 .page .doc-ref b{color:var(--ink);font-weight:600;}
@@ -232,13 +234,13 @@ table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
 .page .firma{margin-top:14px;display:flex;align-items:baseline;gap:14px;}
 .page .firma .small{font-size:11px;letter-spacing:.1em;color:var(--muted);font-weight:600;}
 .page .firma .firma-nombre{font-size:13px;font-weight:600;color:#37432c;}
-.page .foot{margin-top:auto;padding-top:12px;border-top:1px solid var(--line-strong);display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:18px;}
+.page .foot{margin-top:auto;padding-top:12px;border-top:1px solid var(--line-strong);display:grid;grid-template-columns:auto 1fr;align-items:center;gap:18px;}
 .page .foot .foot-logo{height:26px;display:block;}
-.page .foot .foot-c{display:flex;gap:22px;justify-content:center;flex-wrap:wrap;}
+.page .foot .foot-c{display:flex;gap:30px;justify-content:center;flex-wrap:wrap;}
 .page .foot .fi{display:flex;align-items:center;gap:7px;font-size:11.5px;color:#5f5c52;}
 .page .foot .fi svg{width:16px;height:16px;color:var(--olive);}
-.page .foot .foot-tuv{height:46px;display:block;opacity:.85;}
-.page.no-total .total-wrap,.page.no-total .col-sub,.page.no-total .it-sub{display:none;}
+.page .total-bar{height:10px;background:var(--olive);border-radius:2px;margin-top:2px;}
+.page.no-total .total-wrap{display:none;}
 
 /* ---------- PRINT ---------- */
 @media print{
@@ -252,8 +254,9 @@ table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
   #docMount{margin:0;}
   .page{
     box-shadow:none;margin:0 !important;width:210mm;
-    min-height:0 !important;height:auto !important;max-height:296mm;
+    min-height:0 !important;height:297mm !important;max-height:297mm;
     overflow:hidden;page-break-after:avoid;page-break-inside:avoid;break-inside:avoid;
+    display:flex;flex-direction:column;
   }
   .page::after{content:none;}
   /* nada después de .page debe forzar otra página */
@@ -531,9 +534,10 @@ function quoteToRow(q){
     updated_at: new Date().toISOString()
   };
 }
+function parseVer(ref){ const m=/VER\s*0*([0-9]+)/i.exec(String(ref||'')); return m?parseInt(m[1],10):1; }
 function rowToQuote(r){
   return {
-    id: r.id, seq: r.seq, ref: r.ref, title: r.titulo, dateISO: r.fecha_iso,
+    id: r.id, seq: r.seq, ref: r.ref, version: parseVer(r.ref), title: r.titulo, dateISO: r.fecha_iso,
     clientId: r.cliente_id || '', client: r.cliente||'', attn: r.atencion||'',
     email: r.email||'', phone: r.telefono||'', currency: r.moneda||'USD',
     showTotal: r.mostrar_total!==false, items: r.items||[],
@@ -586,7 +590,7 @@ function isoToText(iso){
   return `${d} de ${MESES[m-1]} de ${y}`;
 }
 function todayStr(){ return isoToText(todayISO()); }
-function refStr(seq){ return String(seq).padStart(4,'0')+' – VER01'; }
+function refStr(seq, ver){ return String(seq).padStart(4,'0')+' – VER'+String(ver||1).padStart(2,'0'); }
 
 /* ================= ROUTER ================= */
 const VIEWS = {};
@@ -624,6 +628,7 @@ const ICO = {
   phone:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 4h3.5l1.8 4.4-2.2 1.6a12 12 0 0 0 5.4 5.4l1.6-2.2 4.4 1.8V19a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>',
   web:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>',
   plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
+  copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>',
   doc:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/></svg>',
   search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>',
   print:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a1 1 0 0 1-1 1h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>',
@@ -755,7 +760,7 @@ VIEWS.quotes = function(){
     </div>
     <div class="card">
       ${list.length? `<table class="grid">
-        <thead><tr><th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th><th>Estado</th><th class="r">Total</th><th class="r">Fecha</th></tr></thead>
+        <thead><tr><th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th><th>Estado</th><th class="r">Total</th><th class="r">Fecha</th><th></th></tr></thead>
         <tbody>${list.map(rowQuote).join('')}</tbody></table>`
         : emptyState('Sin resultados','Probá con otro filtro o creá una nueva cotización.')}
     </div>`;
@@ -780,6 +785,9 @@ function rowQuote(x){
     </td>
     <td class="r"><b>USD ${fmt(quoteTotal(x))}</b></td>
     <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+    <td onclick="event.stopPropagation()" style="text-align:right;white-space:nowrap">
+      <button class="btn sm ghost" title="Crear nueva versión (misma referencia)" onclick="newVersion('${x.id}')">${ICO.copy} Versión</button>
+    </td>
   </tr>`;
 }
 async function setQuoteState(id, state){
@@ -908,7 +916,7 @@ function newQuote(clientId){
     id:null, seq:null, ref:'(sin asignar)', // el nº definitivo se asigna al guardar/PDF
     title:'OFERTA ECONÓMICA', dateISO:todayISO(),
     clientId: c?c.id:'', client:c?c.name:'', attn:c?c.attn:'', email:c?c.email:'', phone:c?c.phone:'',
-    currency:'USD', showTotal:true, comercial:'',
+    currency:'USD', showTotal:true, comercial:'', version:1,
     items:[{ catId:'', detail:'', price:'', qty:1, plazo:'' }],
     pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
     nota1:'Los traslados e instalación se cotizan por separado.',
@@ -921,11 +929,35 @@ function newQuote(clientId){
 function editQuote(id){
   CUR = JSON.parse(JSON.stringify(DB.quotes.find(x=>x.id===id)));
   if(!CUR.dateISO) CUR.dateISO = todayISO(); // compat. cotizaciones previas
+  if(!CUR.version) CUR.version = parseVer(CUR.ref);
   renderEditor(false);
+}
+async function newVersion(id){
+  const base = DB.quotes.find(x=>x.id===id);
+  if(!base) return;
+  if(!base.seq){ toast('Guardá la cotización original antes de versionar.'); return; }
+  // Mayor versión existente para este número de oferta (misma línea)
+  const maxVer = DB.quotes.filter(q=>q.seq===base.seq)
+                          .reduce((m,q)=>Math.max(m, q.version||parseVer(q.ref)||1), 1);
+  const nueva = JSON.parse(JSON.stringify(base));
+  nueva.id = null;                       // registro nuevo en la base (uuid propio)
+  nueva.seq = base.seq;                  // MISMO número/línea de referencia
+  nueva.version = maxVer + 1;            // v2, v3, ...
+  nueva.ref = refStr(nueva.seq, nueva.version);
+  nueva.state = 'borrador';              // la nueva versión arranca como borrador
+  nueva.dateISO = todayISO();            // fecha de la revisión
+  nueva.created = Date.now();
+  CUR = nueva;
+  try{
+    await saveQuote({silent:true, state:'borrador'});   // persiste y adopta uuid
+    toast('Versión '+String(nueva.version).padStart(2,'0')+' creada');
+    renderEditor(false);
+  }catch(e){ /* el toast de error ya se mostró */ }
 }
 function renderEditor(isNew){
   setHeader(isNew?'Nueva cotización':'Editar cotización', CUR.ref,
     `<button class="btn ghost" onclick="go('quotes')">← Volver</button>
+     ${(!isNew && CUR.id)?`<button class="btn ghost" onclick="newVersion('${CUR.id}')">${ICO.copy||ICO.plus} Nueva versión</button>`:''}
      <button class="btn ghost" onclick="printQuote()">${ICO.print} Imprimir / PDF</button>
      <button class="btn" onclick="saveQuote()">Guardar</button>`);
   const opts = DB.clients.map(c=>`<option value="${c.id}" ${c.id===CUR.clientId?'selected':''}>${esc(c.name)}</option>`).join('');
@@ -1065,13 +1097,14 @@ function renderDoc(){
   m.innerHTML = `
   <div class="page ${CUR.showTotal?'':'no-total'}">
     <div class="head">
-      <div><div class="logo"><img src="${LOGO}" class="logo-img" alt="4housing"></div></div>
-      <div class="col-div">
+      <div class="head-logo"><div class="logo"><img src="${LOGO}" class="logo-img" alt="4housing"></div></div>
+      <div class="col-div head-doc">
         <div class="doc-title">${esc(CUR.title)}</div>
         <div class="doc-rule"></div>
         <div class="doc-ref">Ref. <b>${esc(CUR.ref)}</b></div>
       </div>
-      <div class="col-div">${ICO.cal}<div class="meta-label">FECHA</div><div class="meta-val">${esc(isoToText(CUR.dateISO))}</div></div>
+      <div class="col-div head-date">${ICO.cal}<div class="meta-label">FECHA</div><div class="meta-val">${esc(isoToText(CUR.dateISO))}</div></div>
+      <div class="col-div head-tuv"><img src="${ISO_SEAL}" class="head-tuv-img" alt="ISO 9001 14001 45001 TÜV NORD"></div>
     </div>
     <div class="client">
       <div><div class="cl-label">SEÑORES</div><div class="cl-name">${esc(CUR.client)||'[CLIENTE]'}<span class="ul"></span></div></div>
@@ -1087,18 +1120,18 @@ function renderDoc(){
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <div class="total-wrap">
+    ${CUR.showTotal ? `<div class="total-wrap">
       <div class="total-label">TOTAL (${sym})</div>
       <div class="total-box"><span class="cur">${sym} TOTAL</span><span class="big">${fmt(quoteTotal(CUR))}</span></div>
-    </div>
-    <div class="note">${esc(CUR.ivanote)}</div>
+    </div>` : `<div class="total-bar"></div>`}
+    ${esc(CUR.ivanote).trim() ? `<div class="note">${esc(CUR.ivanote)}</div>` : ''}
     <div class="conds">
       <div><div class="cd-top"><span class="cd-num">02.</span></div><div class="cd-label">FORMA DE PAGO</div><div class="cd-val">${esc(CUR.pago)}</div></div>
       <div><div class="cd-top"><span class="cd-num">03.</span></div><div class="cd-label">VALIDEZ DE OFERTA</div><div class="cd-val">${esc(CUR.validez)}</div></div>
       <div><div class="cd-top"><span class="cd-num">04.</span></div><div class="cd-label">PLAZO DE ENTREGA</div><div class="cd-val">${esc(CUR.entrega)}</div></div>
       <div><div class="cd-top"><span class="cd-num">05.</span></div><div class="cd-label">PLAZO MÍNIMO DE ALQUILER</div><div class="cd-val">${esc(CUR.minimo)}</div></div>
     </div>
-    <div class="notas"><div class="nt-head">NOTAS</div><div class="nt-body"><div>${esc(CUR.nota1)}</div><div>${esc(CUR.nota2)}</div></div></div>
+    ${(esc(CUR.nota1).trim()||esc(CUR.nota2).trim()) ? `<div class="notas"><div class="nt-head">NOTAS</div><div class="nt-body"><div>${esc(CUR.nota1)}</div><div>${esc(CUR.nota2)}</div></div></div>` : ''}
     <div class="firma"><span class="small">DEPARTAMENTO COMERCIAL</span>${CUR.comercial?`<span class="firma-nombre">${esc(CUR.comercial)}</span>`:''}</div>
     <div class="foot">
       <div class="foot-l"><img src="${LOGO}" class="foot-logo" alt="4housing"></div>
@@ -1107,7 +1140,6 @@ function renderDoc(){
         <div class="fi">${ICO.web}<span>${esc(SETTINGS.web)}</span></div>
         <div class="fi">${ICO.phone}<span>${esc(SETTINGS.tel)}</span></div>
       </div>
-      <div class="foot-r"><img src="${ISO_SEAL}" class="foot-tuv" alt="ISO 9001 14001 45001 TÜV NORD"></div>
     </div>
   </div>`;
 }
@@ -1145,7 +1177,7 @@ async function saveQuote(opts){
       CUR.state = opts.state || 'borrador';
       if(!CUR.seq){
         CUR.seq = await SB.nextSeq();          // incremento atómico (no se pisa entre usuarios)
-        CUR.ref = refStr(CUR.seq);
+        CUR.ref = refStr(CUR.seq, CUR.version||1);
       }
       const row = await SB.addQuote(quoteToRow(CUR));
       CUR.id = row.id;                          // adoptar el uuid de Supabase
@@ -1288,7 +1320,7 @@ async function initAuth(){
 }
 
 /* ================= START ================= */
-window.newQuote=newQuote; window.editQuote=editQuote; window.clientForm=clientForm;
+window.newQuote=newQuote; window.editQuote=editQuote; window.newVersion=newVersion; window.clientForm=clientForm;
 window.saveClient=saveClient; window.delClient=delClient; window.addCat=addCat; window.delCat=delCat;
 window.addItem=addItem; window.delItem=delItem; window.saveQuote=saveQuote; window.printQuote=printQuote;
 window.go=go; window.closeModal=closeModal; window.setQuoteState=setQuoteState; window.dashSelect=dashSelect;
