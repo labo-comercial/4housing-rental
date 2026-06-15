@@ -73,6 +73,18 @@ table.grid th.c,table.grid td.c{text-align:center;}
 table.grid td{padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:middle;}
 table.grid tbody tr:last-child td{border-bottom:none;}
 table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
+/* agrupación de versiones */
+.ver-toggle{display:inline-flex;align-items:center;gap:7px;cursor:pointer;}
+.ver-toggle .chev{width:15px;height:15px;color:var(--olive-deep);flex:none;transition:transform .18s;}
+.ver-grp.open .ver-toggle .chev{transform:rotate(90deg);}
+.ver-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 6px;border-radius:30px;background:var(--olive);color:var(--olive-ink);font-size:10.5px;font-weight:700;letter-spacing:.02em;}
+.ver-badge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--olive-deep);background:#eef0ea;border-radius:5px;padding:2px 6px;margin-left:7px;vertical-align:middle;}
+tr.ver-child{background:#fbfaf5;}
+tr.ver-child td{border-bottom:1px solid var(--line);}
+tr.ver-child td:first-child{padding-left:38px;position:relative;}
+tr.ver-child td:first-child::before{content:"";position:absolute;left:22px;top:0;bottom:0;width:2px;background:var(--line-strong);}
+tr.ver-child.hide{display:none;}
+.ver-tag{font-size:11px;font-weight:600;color:#94917f;}
 .empty{padding:42px 20px;text-align:center;color:var(--muted);font-size:14px;}
 .empty svg{width:40px;height:40px;color:var(--line-strong);margin-bottom:10px;}
 
@@ -174,12 +186,12 @@ table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
 }
 /* keep coloured fills when printing (otherwise the PDF prints all white) */
 .page,.page *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
-.page .head{display:grid;grid-template-columns:1.05fr 1.35fr .85fr .7fr;align-items:center;gap:0;padding-bottom:12px;}
+.page .head{display:grid;grid-template-columns:1fr 1.3fr .8fr .85fr;align-items:center;gap:0;padding-bottom:12px;}
 .page .head>div{padding:0 20px;}
 .page .head>div:first-child{padding-left:0;}
 .page .head>div:last-child{padding-right:0;}
 .page .head-tuv{display:flex;align-items:center;justify-content:flex-end;}
-.page .head-tuv .head-tuv-img{height:62px;width:auto;display:block;opacity:.9;}
+.page .head-tuv .head-tuv-img{height:80px;width:auto;display:block;opacity:.9;}
 .page .col-div{border-left:1px solid var(--line-strong);}
 .page .logo-img{height:50px;width:auto;display:block;}
 .page .doc-title{font-weight:600;font-size:19px;letter-spacing:.08em;color:var(--ink);line-height:1.1;}
@@ -629,6 +641,7 @@ const ICO = {
   web:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>',
   plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
   copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>',
+  chev:'<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 6l6 6-6 6"/></svg>',
   doc:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/></svg>',
   search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>',
   print:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a1 1 0 0 1-1 1h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>',
@@ -637,6 +650,7 @@ const ICO = {
 
 /* ================= DASHBOARD ================= */
 let dashFilter = null; // {label, fn} para filtrar la lista de abajo
+let openGroups = new Set();   // claves de grupos de versiones desplegados (se conserva entre re-renders)
 
 function monthKey(ts){ const d=new Date(ts); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
 function curMonthKey(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
@@ -717,7 +731,7 @@ VIEWS.dashboard = function(){
       </div>
       ${listed.length? `<table class="grid">
         <thead><tr><th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th><th>Estado</th><th class="r">Total</th><th class="r">Fecha</th></tr></thead>
-        <tbody>${listed.map(rowQuoteDash).join('')}</tbody></table>`
+        <tbody>${groupQuotes(listed).map(rowGroupDash).join('')}</tbody></table>`
         : emptyState('Sin cotizaciones','No hay cotizaciones para este indicador.')}
     </div>`;
 };
@@ -727,9 +741,35 @@ function dashSelect(key){
   VIEWS.dashboard();
 }
 // Fila del panel: SIN selector de estado (solo lectura); el estado se cambia en Cotizaciones
-function rowQuoteDash(x){
-  return `<tr class="clickable" onclick="editQuote('${x.id}')">
-    <td><b>${esc(x.ref)}</b></td>
+function rowGroupDash(g){
+  const multi = g.versions.length>1;
+  const open = openGroups.has('dash-'+g.key);
+  const main = rowQuoteDash(g.main, {multi, open, count:g.versions.length, groupKey:'dash-'+g.key});
+  if(!multi) return main;
+  const children = g.versions.slice(1).map(v=>rowQuoteDash(v, {child:true, groupKey:'dash-'+g.key, hidden:!open})).join('');
+  return main + children;
+}
+function rowQuoteDash(x, o){
+  o = o || {};
+  const ver = x.version || parseVer(x.ref) || 1;
+  if(o.child){
+    return `<tr class="clickable ver-child ${o.hidden?'hide':''}" data-key="${o.groupKey}" onclick="editQuote('${x.id}')">
+      <td><span class="ver-tag">VER${String(ver).padStart(2,'0')}</span></td>
+      <td>${esc(x.client||'—')}</td>
+      <td>${esc(x.attn||'—')}</td>
+      <td>${esc(x.comercial||'—')}</td>
+      <td><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
+      <td class="r"><b>USD ${fmt(quoteTotal(x))}</b></td>
+      <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+    </tr>`;
+  }
+  const refCell = o.multi
+    ? `<span class="ver-toggle" onclick="event.stopPropagation();toggleGroup('${o.groupKey}')" title="Ver versiones">
+         ${ICO.chev}<b>${esc(refBase(x))}</b><span class="ver-count">${o.count}</span>
+       </span>`
+    : `<b>${esc(x.ref)}</b>`;
+  return `<tr class="clickable ${o.multi?'ver-main ver-grp':''} ${o.open?'open':''}" ${o.multi?`data-key="${o.groupKey}"`:''} onclick="editQuote('${x.id}')">
+    <td>${refCell}${o.multi?`<span class="ver-badge">VER${String(ver).padStart(2,'0')}</span>`:''}</td>
     <td>${esc(x.client||'—')}</td>
     <td>${esc(x.attn||'—')}</td>
     <td>${esc(x.comercial||'—')}</td>
@@ -744,12 +784,33 @@ function emptyState(t,s){
 
 /* ================= QUOTES LIST ================= */
 let quoteFilter='all', quoteSearch='';
+
+// Agrupa cotizaciones por número de oferta (seq). Devuelve grupos ordenados,
+// cada uno con su versión más reciente como "principal" y el resto como hijas.
+function groupQuotes(list){
+  const map = new Map();
+  list.forEach(q=>{
+    const key = (q.seq!=null) ? ('s'+q.seq) : ('id'+q.id); // sin nº asignado: grupo propio
+    if(!map.has(key)) map.set(key, []);
+    map.get(key).push(q);
+  });
+  const groups = [];
+  map.forEach((versions, key)=>{
+    versions.sort((a,b)=>(b.version||parseVer(b.ref)||1)-(a.version||parseVer(a.ref)||1)); // mayor versión primero
+    groups.push({ key, seq:versions[0].seq, main:versions[0], versions });
+  });
+  // ordenar grupos por la cotización más reciente de cada uno
+  groups.sort((a,b)=> Math.max(...b.versions.map(v=>v.created)) - Math.max(...a.versions.map(v=>v.created)));
+  return groups;
+}
+
 VIEWS.quotes = function(){
   setHeader('Cotizaciones','Pipeline comercial',
     `<button class="btn" onclick="newQuote()">${ICO.plus} Nueva cotización</button>`);
-  let list=[...DB.quotes].sort((a,b)=>b.created-a.created);
+  let list=[...DB.quotes];
   if(quoteFilter!=='all') list=list.filter(x=>x.state===quoteFilter);
   if(quoteSearch) list=list.filter(x=>(x.client+' '+x.ref+' '+(x.attn||'')).toLowerCase().includes(quoteSearch.toLowerCase()));
+  const groups = groupQuotes(list);
   C().innerHTML = `
     <div class="toolbar">
       <div class="search">${ICO.search}<input id="qSearch" placeholder="Buscar por cliente o referencia…" value="${esc(quoteSearch)}"></div>
@@ -759,9 +820,9 @@ VIEWS.quotes = function(){
       </div>
     </div>
     <div class="card">
-      ${list.length? `<table class="grid">
+      ${groups.length? `<table class="grid">
         <thead><tr><th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th><th>Estado</th><th class="r">Total</th><th class="r">Fecha</th><th></th></tr></thead>
-        <tbody>${list.map(rowQuote).join('')}</tbody></table>`
+        <tbody>${groups.map(rowGroup).join('')}</tbody></table>`
         : emptyState('Sin resultados','Probá con otro filtro o creá una nueva cotización.')}
     </div>`;
   const s=document.getElementById('qSearch');
@@ -772,10 +833,55 @@ VIEWS.quotes = function(){
     sel.onclick=e=>e.stopPropagation();
   });
 };
-function rowQuote(x){
+
+// Devuelve el HTML de un grupo: fila principal (versión más nueva) + versiones anteriores desplegables
+function rowGroup(g){
+  const multi = g.versions.length>1;
+  const open = openGroups.has(g.key);
+  const main = rowQuote(g.main, {multi, open, count:g.versions.length, groupKey:g.key});
+  if(!multi) return main;
+  const children = g.versions.slice(1).map(v=>rowQuote(v, {child:true, groupKey:g.key, hidden:!open})).join('');
+  return main + children;
+}
+
+// Alterna el despliegue de un grupo de versiones sin re-renderizar toda la vista
+function toggleGroup(key){
+  if(openGroups.has(key)) openGroups.delete(key); else openGroups.add(key);
+  document.querySelectorAll(`tr.ver-child[data-key="${key}"]`).forEach(tr=>tr.classList.toggle('hide'));
+  const mainTr = document.querySelector(`tr.ver-main[data-key="${key}"]`);
+  if(mainTr) mainTr.classList.toggle('open');
+}
+
+function rowQuote(x, o){
+  o = o || {};
   const opts = STATES.map(s=>`<option value="${s.id}" ${s.id===x.state?'selected':''}>${s.label}</option>`).join('');
-  return `<tr class="clickable" onclick="editQuote('${x.id}')">
-    <td><b>${esc(x.ref)}</b></td>
+  const ver = x.version || parseVer(x.ref) || 1;
+
+  // ----- Sub-fila (versión anterior dentro de un grupo desplegado) -----
+  if(o.child){
+    return `<tr class="clickable ver-child ${o.hidden?'hide':''}" data-key="${o.groupKey}" onclick="editQuote('${x.id}')">
+      <td><span class="ver-tag">VER${String(ver).padStart(2,'0')}</span></td>
+      <td>${esc(x.client||'—')}</td>
+      <td>${esc(x.attn||'—')}</td>
+      <td>${esc(x.comercial||'—')}</td>
+      <td onclick="event.stopPropagation()">
+        <span class="badge st-${x.state}">${stLabel(x.state)}</span>
+        <select class="state-sel" data-id="${x.id}" title="Cambiar estado">${opts}</select>
+      </td>
+      <td class="r"><b>USD ${fmt(quoteTotal(x))}</b></td>
+      <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+      <td></td>
+    </tr>`;
+  }
+
+  // ----- Fila principal -----
+  const refCell = o.multi
+    ? `<span class="ver-toggle" onclick="event.stopPropagation();toggleGroup('${o.groupKey}')" title="Ver versiones">
+         ${ICO.chev}<b>${esc(refBase(x))}</b><span class="ver-count">${o.count}</span>
+       </span>`
+    : `<b>${esc(x.ref)}</b>`;
+  return `<tr class="clickable ${o.multi?'ver-main ver-grp':''} ${o.open?'open':''}" ${o.multi?`data-key="${o.groupKey}"`:''} onclick="editQuote('${x.id}')">
+    <td>${refCell}${o.multi?`<span class="ver-badge">VER${String(ver).padStart(2,'0')}</span>`:''}</td>
     <td>${esc(x.client||'—')}</td>
     <td>${esc(x.attn||'—')}</td>
     <td>${esc(x.comercial||'—')}</td>
@@ -789,6 +895,13 @@ function rowQuote(x){
       <button class="btn sm ghost" title="Crear nueva versión (misma referencia)" onclick="newVersion('${x.id}')">${ICO.copy} Versión</button>
     </td>
   </tr>`;
+}
+
+// Número de oferta sin el sufijo de versión (para la fila principal del grupo)
+function refBase(x){
+  const m = /^([0-9]{3,})/.exec(String(x.ref||''));
+  if(m) return m[1];
+  return (x.seq!=null) ? String(x.seq).padStart(4,'0') : esc(x.ref);
 }
 async function setQuoteState(id, state){
   const q = DB.quotes.find(x=>x.id===id);
@@ -1320,7 +1433,7 @@ async function initAuth(){
 }
 
 /* ================= START ================= */
-window.newQuote=newQuote; window.editQuote=editQuote; window.newVersion=newVersion; window.clientForm=clientForm;
+window.newQuote=newQuote; window.editQuote=editQuote; window.newVersion=newVersion; window.toggleGroup=toggleGroup; window.clientForm=clientForm;
 window.saveClient=saveClient; window.delClient=delClient; window.addCat=addCat; window.delCat=delCat;
 window.addItem=addItem; window.delItem=delItem; window.saveQuote=saveQuote; window.printQuote=printQuote;
 window.go=go; window.closeModal=closeModal; window.setQuoteState=setQuoteState; window.dashSelect=dashSelect;
