@@ -1245,11 +1245,17 @@ function openOpp(id){
       </div>
     </div>`;
 
+  const puedeCotizar = (o.unidad==='rental'||o.unidad==='ambas') && !o.cotizacionId;
+  const cotizarBtn = puedeCotizar
+    ? `<button class="btn" onclick="cotizarOportunidad('${o.id}')">${ICO.plus} Generar cotización</button>` : '';
+  const verCotBtn = o.cotizacionId
+    ? `<button class="btn" onclick="abrirCotizacionDeOpp('${o.id}')">Ver cotización</button>` : '';
   const foot = `
     <button class="btn ghost" onclick="closeModal()">Cerrar</button>
     <button class="btn ghost" onclick="editOpp('${o.id}')">Editar</button>
     <button class="btn ghost" style="color:#b0584f" onclick="delOpp('${o.id}')">Eliminar</button>
-    <button class="btn" onclick="addActModal('${o.id}')">${ICO.plus} Gestión</button>`;
+    <button class="btn ghost" onclick="addActModal('${o.id}')">${ICO.plus} Gestión</button>
+    ${verCotBtn}${cotizarBtn}`;
 
   openModal(o.ref || 'Oportunidad', body, foot);
   // cambio de estado en caliente
@@ -1768,9 +1774,37 @@ function newQuote(clientId){
     nota1:'Los traslados e instalación se cotizan por separado.',
     nota2:'Cualquier modificación en las condiciones de la presente propuesta será informada oportunamente.',
     ivanote:ivaDefault('USD'),
-    state:'borrador', created:Date.now(),
+    state:'borrador', created:Date.now(), fromOppId:null,
   };
   renderEditor(true);
+}
+
+// Abre el cotizador precargado con los datos de una oportunidad de rental.
+// Recuerda el vínculo (fromOppId) para enlazar la cotización al guardar.
+function cotizarOportunidad(oppId){
+  const o = DB.opps.find(x=>x.id===oppId); if(!o) return;
+  const c = o.clientId ? DB.clients.find(x=>x.id===o.clientId) : null;
+  CUR = {
+    id:null, seq:null, ref:'(sin asignar)',
+    title:'OFERTA ECONÓMICA', dateISO:todayISO(),
+    clientId: c?c.id:(o.clientId||''), client:c?c.name:oppClientName(o),
+    attn:c?c.attn:'', email:c?c.email:'', phone:c?c.phone:'',
+    currency:'USD', showTotal:true, comercial:o.comercial||'', version:1,
+    items:[{ catId:'', detail:'', price:'', qty:1, plazo:'' }],
+    pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
+    nota1:'Los traslados e instalación se cotizan por separado.',
+    nota2:'Cualquier modificación en las condiciones de la presente propuesta será informada oportunamente.',
+    ivanote:ivaDefault('USD'),
+    state:'borrador', created:Date.now(), fromOppId:oppId,
+  };
+  closeModal();
+  renderEditor(true);
+}
+// Abre la cotización vinculada a una oportunidad
+function abrirCotizacionDeOpp(oppId){
+  const o = DB.opps.find(x=>x.id===oppId); if(!o||!o.cotizacionId) return;
+  closeModal();
+  editQuote(o.cotizacionId);
 }
 function editQuote(id){
   CUR = JSON.parse(JSON.stringify(DB.quotes.find(x=>x.id===id)));
@@ -2027,6 +2061,13 @@ async function saveQuote(opts){
       }
       const row = await SB.addQuote(quoteToRow(CUR));
       CUR.id = row.id;                          // adoptar el uuid de Supabase
+      // Si la cotización nace de una oportunidad de rental, vincularla:
+      // la oportunidad conserva su número (OP-...) y queda enlazada a esta cotización.
+      if(CUR.fromOppId){
+        try{
+          await SB.updateOpp(CUR.fromOppId, { cotizacion_id: CUR.id, estado: 'enviada' });
+        }catch(_){ /* el vínculo es best-effort; la cotización ya se guardó */ }
+      }
       await reloadDB();
     } else {
       if(opts.state) CUR.state = opts.state;
@@ -2168,6 +2209,7 @@ window.newOpp=newOpp; window.saveNewOpp=saveNewOpp; window.openOpp=openOpp; wind
 window.saveEditOpp=saveEditOpp; window.delOpp=delOpp; window.addActModal=addActModal; window.saveAct=saveAct;
 window.newProspecto=newProspecto; window.saveNewProspecto=saveNewProspecto; window.openProspecto=openProspecto;
 window.newOppVentas=newOppVentas; window.saveNewOppFrom=saveNewOppFrom; window.newOppRental=newOppRental;
+window.cotizarOportunidad=cotizarOportunidad; window.abrirCotizacionDeOpp=abrirCotizacionDeOpp;
 window.editProspecto=editProspecto; window.saveEditProspecto=saveEditProspecto; window.backToEmpresas=backToEmpresas;
 window.addProspGestion=addProspGestion; window.saveProspGestion=saveProspGestion; window.convertirProspecto=convertirProspecto;
 
