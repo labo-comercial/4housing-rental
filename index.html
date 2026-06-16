@@ -118,6 +118,9 @@ tr.ver-child.hide{display:none;}
 .emp-card{cursor:pointer;}
 .emp-stat-pills{display:flex;gap:6px;flex-wrap:wrap;}
 .mini-pill{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:20px;}
+.prosp-contact svg{width:14px;height:14px;vertical-align:-2px;margin-right:4px;color:var(--muted);}
+.kpi-prosp .kpi-value.ok{color:#4f8a53;}
+.kpi-prosp .kpi-value.bad{color:#b0584f;}
 /* chips de filtro oportunidades */
 .opp-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;}
 .opp-filters select{border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:12.5px;background:#fff;color:#6f6c60;font-weight:600;cursor:pointer;}
@@ -526,6 +529,7 @@ const SB = {
   // ---- Prospección ----
   listEmpProsp: () => sbFetch('/empresas_prospecto?select=*&order=nombre.asc', {headers:{'Range':'0-1999'}}),
   addEmpProsp:  (e) => sbFetch('/empresas_prospecto', {method:'POST', body: JSON.stringify(e)}).then(r=>r[0]),
+  updateEmpProsp: (id,e) => sbFetch('/empresas_prospecto?id=eq.'+id, {method:'PATCH', body: JSON.stringify(e)}).then(r=>r[0]),
   listProspectos: () => sbFetch('/prospectos?select=*&order=apellido.asc', {headers:{'Range':'0-4999'}}),
   addProspecto: (p) => sbFetch('/prospectos', {method:'POST', body: JSON.stringify(p)}).then(r=>r[0]),
   updateProspecto: (id,p) => sbFetch('/prospectos?id=eq.'+id, {method:'PATCH', body: JSON.stringify(p)}).then(r=>r[0]),
@@ -1301,10 +1305,10 @@ async function saveAct(oppId){
 /* ================= PROSPECCIÓN ================= */
 const PROSP_ESTADOS = ['sin_contactar','contactado','en_conversacion','calificado','descartado'];
 const PROSP_ESTADO_LBL = { sin_contactar:'Sin contactar', contactado:'Contactado', en_conversacion:'En conversación', calificado:'Calificado', descartado:'Descartado' };
-let prospView = { mode:'empresas', empresaId:null, search:'', filtroEstado:'' };
+let prospView = { mode:'empresas', empresaId:null, search:'', filtroEstado:'', sector:'' };
 
 VIEWS.prosp = async function(){
-  setHeader('Prospección','Minería + Oil & Gas',
+  setHeader('Prospección','Prospección comercial multisector',
     `<button class="btn" onclick="newProspecto()">${ICO.plus} Nuevo prospecto</button>`);
   if(!PROSP_LOADED){
     C().innerHTML = `<div class="empty">Cargando base de prospección…</div>`;
@@ -1315,29 +1319,68 @@ VIEWS.prosp = async function(){
   else renderEmpresaDetalle();
 };
 
+// ---- Indicadores de prospección ----
+function startOfToday(){ const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); }
+function startOfYesterday(){ return startOfToday() - 86400000; }
+function startOfWeek(){ const d=new Date(); d.setHours(0,0,0,0); const dow=(d.getDay()+6)%7; d.setDate(d.getDate()-dow); return d.getTime(); }
+function startOfMonth(){ const d=new Date(); return new Date(d.getFullYear(),d.getMonth(),1).getTime(); }
+
+function prospGestiones(){ return DB.acts.filter(a=> a.descripcion && a.descripcion.includes('[prospecto:')); }
+
+function prospKPIs(){
+  const g = prospGestiones();
+  const t0=startOfToday(), ty=startOfYesterday(), tw=startOfWeek(), tm=startOfMonth();
+  const hoy = g.filter(a=> a.fecha>=t0).length;
+  const ayer = g.filter(a=> a.fecha>=ty && a.fecha<t0).length;
+  const semana = g.filter(a=> a.fecha>=tw).length;
+  // por estado actual + fecha de cambio aproximada (no rastreamos histórico fino aquí)
+  const enConv = DB.prospectos.filter(p=> p.estado==='en_conversacion').length;
+  const convMes = DB.prospectos.filter(p=> p.estado==='calificado' && p.oppId).length;
+  return { hoy, ayer, semana, enConv, convMes };
+}
+
+function kpiCard(label, value, target, sub){
+  const ok = value>=target;
+  return `<div class="kpi kpi-prosp" style="cursor:default">
+    <div class="kpi-label">${label}</div>
+    <div class="kpi-value ${ok?'ok':'bad'}">${value}${target?`<span style="font-size:16px;color:var(--muted);font-weight:600"> / ${target}</span>`:''}</div>
+    <div class="kpi-sub">${sub||''}</div>
+  </div>`;
+}
+
 function renderEmpresas(){
   const q = prospView.search.toLowerCase();
   let emps = [...DB.empProsp];
-  // contar prospectos por empresa y estado
   const byEmp = {};
-  DB.prospectos.forEach(p=>{
-    (byEmp[p.empresaId] = byEmp[p.empresaId] || []).push(p);
-  });
+  DB.prospectos.forEach(p=>{ (byEmp[p.empresaId] = byEmp[p.empresaId] || []).push(p); });
+  // sectores disponibles
+  const sectores = [...new Set(DB.empProsp.map(e=>e.sector).filter(Boolean))].sort();
+  if(prospView.sector) emps = emps.filter(e=> e.sector===prospView.sector);
   if(q) emps = emps.filter(e=> e.nombre.toLowerCase().includes(q));
-  // ordenar: las que tienen más contactos primero
   emps.sort((a,b)=> (byEmp[b.id]?.length||0) - (byEmp[a.id]?.length||0) || a.nombre.localeCompare(b.nombre));
 
   const totalProsp = DB.prospectos.length;
   const totalEmp = DB.empProsp.length;
+  const k = prospKPIs();
+
+  const sectorOpts = `<option value="">Todos los sectores</option>`+sectores.map(s=>`<option value="${esc(s)}" ${s===prospView.sector?'selected':''}>${esc(s)}</option>`).join('');
 
   C().innerHTML = `
+    <div class="kpi-grid" style="margin-bottom:20px">
+      ${kpiCard('Contactados hoy', k.hoy, 30, 'Gestiones registradas hoy · objetivo 30')}
+      ${kpiCard('Contactados ayer', k.ayer, 30, 'Gestiones de ayer · objetivo 30')}
+      ${kpiCard('Gestiones de la semana', k.semana, 150, 'Esta semana · objetivo 150')}
+      ${kpiCard('En conversación', k.enConv, 0, 'Prospectos en conversación activa')}
+      ${kpiCard('Convertidos a oportunidad', k.convMes, 60, 'Calificados con oportunidad · objetivo 60')}
+    </div>
     <div class="opp-filters">
-      <input id="pSearch" class="inp" style="max-width:340px" placeholder="Buscar empresa…" value="${esc(prospView.search)}">
-      <span class="help" style="margin-left:auto">${totalEmp} empresas · ${totalProsp} contactos</span>
+      <input id="pSearch" class="inp" style="max-width:300px" placeholder="Buscar empresa…" value="${esc(prospView.search)}">
+      <select id="pSector">${sectorOpts}</select>
+      <span class="help" style="margin-left:auto">${emps.length} empresas${prospView.sector||q?' (filtradas)':''} · ${totalProsp} contactos</span>
     </div>
     <div class="card"><div class="card-b" style="padding:0">
       <table class="grid">
-        <thead><tr><th>Empresa</th><th class="c">Contactos</th><th>Estado de avance</th></tr></thead>
+        <thead><tr><th>Empresa</th><th>Sector</th><th class="c">Contactos</th><th>Estado de avance</th></tr></thead>
         <tbody>${emps.slice(0,400).map(e=>{
           const ps = byEmp[e.id]||[];
           const counts = {};
@@ -1346,16 +1389,18 @@ function renderEmpresas(){
             `<span class="mini-pill ps-${s}">${counts[s]} ${PROSP_ESTADO_LBL[s].toLowerCase()}</span>`).join(' ');
           return `<tr class="clickable" data-emp="${e.id}">
             <td><strong>${esc(e.nombre)}</strong></td>
+            <td style="font-size:12px;color:var(--muted)">${esc(e.sector||'—')}</td>
             <td class="c">${ps.length}</td>
             <td><div class="emp-stat-pills">${pills||'<span class="help">—</span>'}</div></td>
           </tr>`;
         }).join('')}</tbody>
       </table>
-      ${emps.length>400?`<div class="help" style="padding:12px 16px">Mostrando las primeras 400 empresas. Usá el buscador para encontrar otras.</div>`:''}
+      ${emps.length>400?`<div class="help" style="padding:12px 16px">Mostrando las primeras 400 empresas. Usá el buscador o el filtro de sector para acotar.</div>`:''}
     </div></div>`;
 
   const s=document.getElementById('pSearch');
   s.oninput=()=>{ prospView.search=s.value; const p=s.selectionStart; renderEmpresas(); const n=document.getElementById('pSearch'); n.focus(); n.setSelectionRange(p,p); };
+  document.getElementById('pSector').onchange=ev=>{ prospView.sector=ev.target.value; renderEmpresas(); };
   C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=>{ prospView.mode='empresa'; prospView.empresaId=tr.dataset.emp; renderEmpresaDetalle(); });
 }
 
@@ -1375,6 +1420,12 @@ function renderEmpresaDetalle(){
         <div>
           <div style="font-size:20px;font-weight:700;color:#37432c">${esc(e.nombre)}</div>
           <div class="help" style="margin-top:4px">${ps.length} contacto${ps.length===1?'':'s'}${e.pais?' · '+esc(e.pais):''}</div>
+          <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
+            <span class="help">Sector:</span>
+            <select id="empSector" class="state-sel" style="max-width:none;margin-top:0">
+              ${['','Oil & Gas','Minería','Agro','Construcción','Energía','Industria','Otro'].map(s=>`<option value="${s}" ${s===(e.sector||'')?'selected':''}>${s||'— sin asignar —'}</option>`).join('')}
+            </select>
+          </div>
         </div>
         ${e.linkedin?`<a href="${esc(e.linkedin)}" target="_blank" class="btn ghost">LinkedIn empresa</a>`:''}
       </div>
@@ -1391,6 +1442,11 @@ function renderEmpresaDetalle(){
     </div></div>`;
 
   document.getElementById('pFiltroEstado').onchange=ev=>{ prospView.filtroEstado=ev.target.value; renderEmpresaDetalle(); };
+  const secSel=document.getElementById('empSector');
+  if(secSel) secSel.onchange=async()=>{
+    try{ await SB.updateEmpProsp(e.id,{sector:secSel.value||null}); e.sector=secSel.value; toast('Sector actualizado'); }
+    catch(err){ toast('Error: '+err.message); }
+  };
   C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openProspecto(tr.dataset.id));
 }
 
@@ -1399,7 +1455,7 @@ function rowProspecto(p){
   return `<tr class="clickable" data-id="${p.id}">
     <td><strong>${esc((p.nombre+' '+p.apellido).trim())}</strong>${p.seniority?`<br><span class="help" style="font-size:10.5px">${esc(p.seniority)}</span>`:''}</td>
     <td style="font-size:12.5px">${esc(p.cargo||'—')}</td>
-    <td style="font-size:12px;line-height:1.6">${contacto}</td>
+    <td class="prosp-contact" style="font-size:12px;line-height:1.7">${contacto}</td>
     <td><span class="badge ps-${p.estado}">${PROSP_ESTADO_LBL[p.estado]||p.estado}</span></td>
     <td>${p.linkedin?`<a href="${esc(p.linkedin)}" target="_blank" class="help" onclick="event.stopPropagation()" style="text-decoration:underline">in</a>`:''}</td>
   </tr>`;
