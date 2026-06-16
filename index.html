@@ -109,6 +109,15 @@ tr.ver-child.hide{display:none;}
 .os-cotizada{background:#eceae1;color:#7c6f86;}
 .os-ganada{background:#e6f1e3;color:#4f8a53;}
 .os-perdida{background:#f6ebea;color:#b0584f;}
+/* estado prospectos */
+.ps-sin_contactar{background:#eef0f2;color:#8a9098;}
+.ps-contactado{background:#e7eef6;color:#4f7099;}
+.ps-en_conversacion{background:#fbf1e0;color:#b3853a;}
+.ps-calificado{background:#e6f1e3;color:#4f8a53;}
+.ps-descartado{background:#f6ebea;color:#b0584f;}
+.emp-card{cursor:pointer;}
+.emp-stat-pills{display:flex;gap:6px;flex-wrap:wrap;}
+.mini-pill{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:20px;}
 /* chips de filtro oportunidades */
 .opp-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;}
 .opp-filters select{border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:12.5px;background:#fff;color:#6f6c60;font-weight:600;cursor:pointer;}
@@ -359,6 +368,10 @@ textarea.inp{resize:vertical;min-height:60px;}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l5-5 4 4 8-8"/><path d="M21 8v5M21 8h-5"/><path d="M3 21h18"/></svg>
         Oportunidades
       </button>
+      <button class="navbtn" data-view="prosp">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/><path d="M11 8v6M8 11h6"/></svg>
+        Prospección
+      </button>
       <button class="navbtn" data-view="clients">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-5 6-5s6 1.7 6 5"/><path d="M16 5.5a3 3 0 0 1 0 5.4M18 20c0-2.4-1-4-2.5-4.7"/></svg>
         Clientes
@@ -510,6 +523,13 @@ const SB = {
   listActs:    () => sbFetch('/actividades?select=*&order=fecha.desc'),
   addAct:      (a) => sbFetch('/actividades', {method:'POST', body: JSON.stringify(a)}).then(r=>r[0]),
   delAct:      (id) => sbFetch('/actividades?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
+  // ---- Prospección ----
+  listEmpProsp: () => sbFetch('/empresas_prospecto?select=*&order=nombre.asc', {headers:{'Range':'0-1999'}}),
+  addEmpProsp:  (e) => sbFetch('/empresas_prospecto', {method:'POST', body: JSON.stringify(e)}).then(r=>r[0]),
+  listProspectos: () => sbFetch('/prospectos?select=*&order=apellido.asc', {headers:{'Range':'0-4999'}}),
+  addProspecto: (p) => sbFetch('/prospectos', {method:'POST', body: JSON.stringify(p)}).then(r=>r[0]),
+  updateProspecto: (id,p) => sbFetch('/prospectos?id=eq.'+id, {method:'PATCH', body: JSON.stringify(p)}).then(r=>r[0]),
+  delProspecto: (id) => sbFetch('/prospectos?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
 };
 
 // ---- Mapeo entre el modelo interno (app) y las columnas de Supabase ----
@@ -578,9 +598,23 @@ function rowToAct(r){
     comercial:r.comercial||'', fecha:r.fecha?Date.parse(r.fecha):Date.now()
   };
 }
+// ---- Prospección ----
+function rowToEmpProsp(r){
+  return { id:r.id, nombre:r.nombre||'', sector:r.sector||'', linkedin:r.linkedin||'', pais:r.pais||'', notas:r.notas||'' };
+}
+function rowToProspecto(r){
+  return {
+    id:r.id, empresaId:r.empresa_id||'', nombre:r.nombre||'', apellido:r.apellido||'',
+    cargo:r.cargo||'', email:r.email||'', emailEstado:r.email_estado||'', seniority:r.seniority||'',
+    departamento:r.departamento||'', telefono:r.telefono||'', linkedin:r.linkedin||'',
+    ciudad:r.ciudad||'', pais:r.pais||'', estado:r.estado||'sin_contactar',
+    oppId:r.oportunidad_id||'', notas:r.notas||''
+  };
+}
 
 // DB en memoria: las vistas lo leen igual que antes; se llena desde Supabase
-let DB = { clients:[], quotes:[], catalog:[], opps:[], acts:[], seq:1 };
+let DB = { clients:[], quotes:[], catalog:[], opps:[], acts:[], empProsp:[], prospectos:[], seq:1 };
+let PROSP_LOADED = false;
 let SB_READY = false;
 
 function uid(){ return Math.random().toString(36).slice(2,10); }
@@ -597,6 +631,15 @@ async function reloadDB(){
   DB.opps    = opps.map(rowToOpp);
   DB.acts    = acts.map(rowToAct);
   SB_READY = true;
+}
+
+// Carga la prospección bajo demanda (son ~1900 filas; no en cada reloadDB)
+async function loadProspeccion(force){
+  if(PROSP_LOADED && !force) return;
+  const [emp, prosp] = await Promise.all([ SB.listEmpProsp(), SB.listProspectos() ]);
+  DB.empProsp    = emp.map(rowToEmpProsp);
+  DB.prospectos  = prosp.map(rowToProspecto);
+  PROSP_LOADED = true;
 }
 
 // persist() ya no escribe en localStorage: cada operación habla con Supabase
@@ -1255,6 +1298,252 @@ async function saveAct(oppId){
   }catch(e){ toast('Error: '+e.message); }
 }
 
+/* ================= PROSPECCIÓN ================= */
+const PROSP_ESTADOS = ['sin_contactar','contactado','en_conversacion','calificado','descartado'];
+const PROSP_ESTADO_LBL = { sin_contactar:'Sin contactar', contactado:'Contactado', en_conversacion:'En conversación', calificado:'Calificado', descartado:'Descartado' };
+let prospView = { mode:'empresas', empresaId:null, search:'', filtroEstado:'' };
+
+VIEWS.prosp = async function(){
+  setHeader('Prospección','Minería + Oil & Gas',
+    `<button class="btn" onclick="newProspecto()">${ICO.plus} Nuevo prospecto</button>`);
+  if(!PROSP_LOADED){
+    C().innerHTML = `<div class="empty">Cargando base de prospección…</div>`;
+    try{ await loadProspeccion(); }
+    catch(e){ C().innerHTML = `<div class="empty"><div style="color:#b4554e;font-weight:600">No se pudo cargar la prospección</div><div style="margin-top:6px">${esc(e.message)}</div></div>`; return; }
+  }
+  if(prospView.mode==='empresas') renderEmpresas();
+  else renderEmpresaDetalle();
+};
+
+function renderEmpresas(){
+  const q = prospView.search.toLowerCase();
+  let emps = [...DB.empProsp];
+  // contar prospectos por empresa y estado
+  const byEmp = {};
+  DB.prospectos.forEach(p=>{
+    (byEmp[p.empresaId] = byEmp[p.empresaId] || []).push(p);
+  });
+  if(q) emps = emps.filter(e=> e.nombre.toLowerCase().includes(q));
+  // ordenar: las que tienen más contactos primero
+  emps.sort((a,b)=> (byEmp[b.id]?.length||0) - (byEmp[a.id]?.length||0) || a.nombre.localeCompare(b.nombre));
+
+  const totalProsp = DB.prospectos.length;
+  const totalEmp = DB.empProsp.length;
+
+  C().innerHTML = `
+    <div class="opp-filters">
+      <input id="pSearch" class="inp" style="max-width:340px" placeholder="Buscar empresa…" value="${esc(prospView.search)}">
+      <span class="help" style="margin-left:auto">${totalEmp} empresas · ${totalProsp} contactos</span>
+    </div>
+    <div class="card"><div class="card-b" style="padding:0">
+      <table class="grid">
+        <thead><tr><th>Empresa</th><th class="c">Contactos</th><th>Estado de avance</th></tr></thead>
+        <tbody>${emps.slice(0,400).map(e=>{
+          const ps = byEmp[e.id]||[];
+          const counts = {};
+          ps.forEach(p=> counts[p.estado]=(counts[p.estado]||0)+1);
+          const pills = PROSP_ESTADOS.filter(s=>counts[s]).map(s=>
+            `<span class="mini-pill ps-${s}">${counts[s]} ${PROSP_ESTADO_LBL[s].toLowerCase()}</span>`).join(' ');
+          return `<tr class="clickable" data-emp="${e.id}">
+            <td><strong>${esc(e.nombre)}</strong></td>
+            <td class="c">${ps.length}</td>
+            <td><div class="emp-stat-pills">${pills||'<span class="help">—</span>'}</div></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+      ${emps.length>400?`<div class="help" style="padding:12px 16px">Mostrando las primeras 400 empresas. Usá el buscador para encontrar otras.</div>`:''}
+    </div></div>`;
+
+  const s=document.getElementById('pSearch');
+  s.oninput=()=>{ prospView.search=s.value; const p=s.selectionStart; renderEmpresas(); const n=document.getElementById('pSearch'); n.focus(); n.setSelectionRange(p,p); };
+  C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=>{ prospView.mode='empresa'; prospView.empresaId=tr.dataset.emp; renderEmpresaDetalle(); });
+}
+
+function renderEmpresaDetalle(){
+  const e = DB.empProsp.find(x=>x.id===prospView.empresaId);
+  if(!e){ prospView.mode='empresas'; return renderEmpresas(); }
+  let ps = DB.prospectos.filter(p=>p.empresaId===e.id);
+  if(prospView.filtroEstado) ps = ps.filter(p=>p.estado===prospView.filtroEstado);
+  ps.sort((a,b)=> (a.apellido||'').localeCompare(b.apellido||''));
+
+  const estadoOpts = `<option value="">Todos</option>`+PROSP_ESTADOS.map(s=>`<option value="${s}" ${s===prospView.filtroEstado?'selected':''}>${PROSP_ESTADO_LBL[s]}</option>`).join('');
+
+  C().innerHTML = `
+    <button class="btn ghost" onclick="backToEmpresas()" style="margin-bottom:14px">← Volver a empresas</button>
+    <div class="card" style="margin-bottom:16px"><div class="card-b">
+      <div style="display:flex;justify-content:space-between;align-items:start;gap:16px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:20px;font-weight:700;color:#37432c">${esc(e.nombre)}</div>
+          <div class="help" style="margin-top:4px">${ps.length} contacto${ps.length===1?'':'s'}${e.pais?' · '+esc(e.pais):''}</div>
+        </div>
+        ${e.linkedin?`<a href="${esc(e.linkedin)}" target="_blank" class="btn ghost">LinkedIn empresa</a>`:''}
+      </div>
+    </div></div>
+    <div class="opp-filters">
+      <select id="pFiltroEstado">${estadoOpts}</select>
+      <span class="help" style="margin-left:auto">${ps.length} mostrados</span>
+    </div>
+    <div class="card"><div class="card-b" style="padding:0">
+      <table class="grid">
+        <thead><tr><th>Contacto</th><th>Cargo</th><th>Email / Tel.</th><th>Estado</th><th></th></tr></thead>
+        <tbody>${ps.map(rowProspecto).join('')}</tbody>
+      </table>
+    </div></div>`;
+
+  document.getElementById('pFiltroEstado').onchange=ev=>{ prospView.filtroEstado=ev.target.value; renderEmpresaDetalle(); };
+  C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openProspecto(tr.dataset.id));
+}
+
+function rowProspecto(p){
+  const contacto = [p.email?`${ICO.mail} ${esc(p.email)}`:'', p.telefono?`${ICO.phone} ${esc(p.telefono)}`:''].filter(Boolean).join('<br>') || '<span class="help">—</span>';
+  return `<tr class="clickable" data-id="${p.id}">
+    <td><strong>${esc((p.nombre+' '+p.apellido).trim())}</strong>${p.seniority?`<br><span class="help" style="font-size:10.5px">${esc(p.seniority)}</span>`:''}</td>
+    <td style="font-size:12.5px">${esc(p.cargo||'—')}</td>
+    <td style="font-size:12px;line-height:1.6">${contacto}</td>
+    <td><span class="badge ps-${p.estado}">${PROSP_ESTADO_LBL[p.estado]||p.estado}</span></td>
+    <td>${p.linkedin?`<a href="${esc(p.linkedin)}" target="_blank" class="help" onclick="event.stopPropagation()" style="text-decoration:underline">in</a>`:''}</td>
+  </tr>`;
+}
+
+function backToEmpresas(){ prospView.mode='empresas'; prospView.empresaId=null; prospView.filtroEstado=''; renderEmpresas(); }
+
+function openProspecto(id){
+  const p = DB.prospectos.find(x=>x.id===id); if(!p) return;
+  const e = DB.empProsp.find(x=>x.id===p.empresaId);
+  const acts = DB.acts.filter(a=>a.descripcion && a.descripcion.includes('[prospecto:'+id+']')).sort((a,b)=>b.fecha-a.fecha);
+  const estadoSel = PROSP_ESTADOS.map(s=>`<option value="${s}" ${s===p.estado?'selected':''}>${PROSP_ESTADO_LBL[s]}</option>`).join('');
+
+  const body = `
+    <div class="opp-detail-grid">
+      <div class="fld"><label>Empresa</label><div class="val">${esc(e?e.nombre:'—')}</div></div>
+      <div class="fld"><label>Cargo</label><div class="val">${esc(p.cargo||'—')}</div></div>
+      <div class="fld"><label>Email</label><div class="val">${p.email?esc(p.email):'—'} ${p.emailEstado?`<span class="help">(${esc(p.emailEstado)})</span>`:''}</div></div>
+      <div class="fld"><label>Teléfono</label><div class="val">${esc(p.telefono||'—')}</div></div>
+      <div class="fld"><label>Seniority / Depto.</label><div class="val">${esc(p.seniority||'—')}${p.departamento?' · '+esc(p.departamento):''}</div></div>
+      <div class="fld"><label>Ubicación</label><div class="val">${esc([p.ciudad,p.pais].filter(Boolean).join(', ')||'—')}</div></div>
+      <div class="fld"><label>Estado</label><select id="prospState" class="state-sel" style="max-width:none">${estadoSel}</select></div>
+      <div class="fld"><label>LinkedIn</label><div class="val">${p.linkedin?`<a href="${esc(p.linkedin)}" target="_blank" style="text-decoration:underline">Ver perfil</a>`:'—'}</div></div>
+    </div>
+    ${p.notas?`<div class="fld" style="margin-top:8px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Notas</label><div style="font-size:13.5px;color:#37432c;margin-top:4px">${esc(p.notas)}</div></div>`:''}
+    <div style="margin-top:18px">
+      <label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Gestiones (${acts.length})</label>
+      <div style="margin-top:6px">
+        ${acts.length? acts.map(a=>`<div class="opp-act-item"><div>${esc(a.descripcion.replace('[prospecto:'+id+']','').trim())}</div><div class="meta">${esc(a.tipo)} · ${new Date(a.fecha).toLocaleDateString('es-AR')}${a.comercial?' · '+esc(a.comercial):''}</div></div>`).join('')
+        : '<div class="help">Sin gestiones registradas. Usá “Registrar gestión” para anotar llamadas, mails o reuniones.</div>'}
+      </div>
+    </div>`;
+
+  const foot = `
+    <button class="btn ghost" onclick="closeModal()">Cerrar</button>
+    <button class="btn ghost" onclick="editProspecto('${p.id}')">Editar</button>
+    <button class="btn ghost" onclick="addProspGestion('${p.id}')">${ICO.plus} Gestión</button>
+    <button class="btn" onclick="convertirProspecto('${p.id}')">Convertir a oportunidad</button>`;
+
+  openModal((p.nombre+' '+p.apellido).trim(), body, foot);
+  const sel=document.getElementById('prospState');
+  if(sel) sel.onchange=async()=>{
+    try{ await SB.updateProspecto(p.id,{estado:sel.value}); p.estado=sel.value; toast('Estado actualizado'); }
+    catch(e){ toast('Error: '+e.message); }
+  };
+}
+
+function prospFormBody(p){
+  const empOpts = `<option value="">— sin empresa —</option>`+
+    [...DB.empProsp].sort((a,b)=>a.nombre.localeCompare(b.nombre))
+      .map(e=>`<option value="${e.id}" ${e.id===p.empresaId?'selected':''}>${esc(e.nombre)}</option>`).join('');
+  return `
+    <div class="opp-detail-grid">
+      <div class="fld"><label>Nombre</label><input id="pNombre" class="inp" value="${esc(p.nombre||'')}"></div>
+      <div class="fld"><label>Apellido</label><input id="pApellido" class="inp" value="${esc(p.apellido||'')}"></div>
+      <div class="fld"><label>Empresa</label><select id="pEmpresa" class="inp">${empOpts}</select></div>
+      <div class="fld"><label>Cargo</label><input id="pCargo" class="inp" value="${esc(p.cargo||'')}"></div>
+      <div class="fld"><label>Email</label><input id="pEmail" class="inp" value="${esc(p.email||'')}"></div>
+      <div class="fld"><label>Teléfono</label><input id="pTel" class="inp" value="${esc(p.telefono||'')}"></div>
+      <div class="fld"><label>LinkedIn</label><input id="pLinkedin" class="inp" value="${esc(p.linkedin||'')}"></div>
+      <div class="fld"><label>Ciudad</label><input id="pCiudad" class="inp" value="${esc(p.ciudad||'')}"></div>
+    </div>
+    <div class="fld" style="margin-top:10px"><label>Notas</label><textarea id="pNotas" class="inp" rows="2">${esc(p.notas||'')}</textarea></div>`;
+}
+function readProspForm(){
+  return {
+    nombre:document.getElementById('pNombre').value.trim(),
+    apellido:document.getElementById('pApellido').value.trim(),
+    empresa_id:document.getElementById('pEmpresa').value||null,
+    cargo:document.getElementById('pCargo').value.trim()||null,
+    email:document.getElementById('pEmail').value.trim()||null,
+    telefono:document.getElementById('pTel').value.trim()||null,
+    linkedin:document.getElementById('pLinkedin').value.trim()||null,
+    ciudad:document.getElementById('pCiudad').value.trim()||null,
+    notas:document.getElementById('pNotas').value.trim()||null
+  };
+}
+function newProspecto(){
+  const p={ empresaId:prospView.empresaId||'', nombre:'',apellido:'',cargo:'',email:'',telefono:'',linkedin:'',ciudad:'',notas:'' };
+  openModal('Nuevo prospecto', prospFormBody(p),
+    `<button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="saveNewProspecto()">Crear</button>`);
+}
+async function saveNewProspecto(){
+  try{
+    const f=readProspForm();
+    if(!f.nombre && !f.apellido){ toast('Ingresá al menos nombre o apellido'); return; }
+    await SB.addProspecto(f);
+    await loadProspeccion(true); closeModal(); toast('Prospecto creado'); VIEWS.prosp();
+  }catch(e){ toast('Error: '+e.message); }
+}
+function editProspecto(id){
+  const p=DB.prospectos.find(x=>x.id===id); if(!p) return;
+  openModal('Editar prospecto', prospFormBody(p),
+    `<button class="btn ghost" onclick="openProspecto('${id}')">Volver</button><button class="btn" onclick="saveEditProspecto('${id}')">Guardar</button>`);
+}
+async function saveEditProspecto(id){
+  try{
+    await SB.updateProspecto(id, readProspForm());
+    await loadProspeccion(true); closeModal(); toast('Prospecto actualizado');
+    if(prospView.mode==='empresa') renderEmpresaDetalle(); else renderEmpresas();
+  }catch(e){ toast('Error: '+e.message); }
+}
+function addProspGestion(id){
+  const tipoOpts=['llamada','mail','reunion','linkedin','nota'].map(t=>`<option value="${t}">${t}</option>`).join('');
+  openModal('Registrar gestión',
+    `<div class="fld"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Tipo</label><select id="gTipo" class="inp">${tipoOpts}</select></div>
+     <div class="fld" style="margin-top:10px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Descripción</label><textarea id="gDesc" class="inp" rows="3" placeholder="Qué se hizo o resultó"></textarea></div>
+     <div class="fld" style="margin-top:10px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Comercial</label><input id="gComercial" class="inp"></div>`,
+    `<button class="btn ghost" onclick="openProspecto('${id}')">Volver</button><button class="btn" onclick="saveProspGestion('${id}')">Agregar</button>`);
+}
+async function saveProspGestion(id){
+  try{
+    const desc=document.getElementById('gDesc').value.trim();
+    await SB.addAct({
+      oportunidad_id:null, cliente_id:null, unidad_negocio:'ventas',
+      tipo:document.getElementById('gTipo').value,
+      descripcion:`[prospecto:${id}] ${desc}`,
+      comercial:document.getElementById('gComercial').value.trim()||null
+    });
+    // si estaba sin contactar, pasa a contactado
+    const p=DB.prospectos.find(x=>x.id===id);
+    if(p && p.estado==='sin_contactar'){ await SB.updateProspecto(id,{estado:'contactado'}); }
+    await reloadDB(); await loadProspeccion(true); toast('Gestión registrada'); openProspecto(id);
+  }catch(e){ toast('Error: '+e.message); }
+}
+async function convertirProspecto(id){
+  const p=DB.prospectos.find(x=>x.id===id); if(!p) return;
+  const e=DB.empProsp.find(x=>x.id===p.empresaId);
+  if(!confirm(`¿Convertir a ${(p.nombre+' '+p.apellido).trim()} en una oportunidad de Ventas?`)) return;
+  try{
+    // crear/buscar cliente con el nombre de la empresa
+    let clientId=null;
+    if(e){
+      const found=DB.clients.find(c=>c.name.toLowerCase()===e.nombre.toLowerCase());
+      if(found) clientId=found.id;
+      else { const nc=await SB.addClient(clientToRow({name:e.nombre, attn:(p.nombre+' '+p.apellido).trim(), email:p.email||'', phone:p.telefono||'', notes:'Origen: prospección'})); clientId=nc.id; }
+    }
+    const opp=await SB.addOpp(oppToRow({ clientId, unidad:'ventas', tipo:'Consulta', title:`${e?e.nombre:''} — ${(p.nombre+' '+p.apellido).trim()}`, state:'nuevo', prioridad:'media', notas:`Convertido desde prospección. Cargo: ${p.cargo||'—'}` }));
+    await SB.updateProspecto(id,{estado:'calificado', oportunidad_id:opp.id});
+    await reloadDB(); await loadProspeccion(true);
+    closeModal(); toast('Convertido a oportunidad'); go('opps');
+  }catch(e){ toast('Error al convertir: '+e.message); }
+}
+
 /* ================= QUOTE EDITOR ================= */
 let CUR=null; // working quote
 function newQuote(clientId){
@@ -1667,6 +1956,9 @@ window.go=go; window.closeModal=closeModal; window.setQuoteState=setQuoteState; 
 window.doLogin=doLogin;
 window.newOpp=newOpp; window.saveNewOpp=saveNewOpp; window.openOpp=openOpp; window.editOpp=editOpp;
 window.saveEditOpp=saveEditOpp; window.delOpp=delOpp; window.addActModal=addActModal; window.saveAct=saveAct;
+window.newProspecto=newProspecto; window.saveNewProspecto=saveNewProspecto; window.openProspecto=openProspecto;
+window.editProspecto=editProspecto; window.saveEditProspecto=saveEditProspecto; window.backToEmpresas=backToEmpresas;
+window.addProspGestion=addProspGestion; window.saveProspGestion=saveProspGestion; window.convertirProspecto=convertirProspecto;
 
 // Arranque: 1) login Microsoft, 2) cargar Supabase, 3) mostrar panel
 (async function start(){
