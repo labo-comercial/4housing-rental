@@ -95,6 +95,7 @@ tr.ver-child.hide{display:none;}
 .state-sel{display:block;margin-top:6px;border:1px solid var(--line-strong);border-radius:7px;padding:4px 6px;font-size:11.5px;background:#fff;color:#6f6c60;font-weight:600;cursor:pointer;max-width:140px;}
 .state-sel:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.18);}
 .badge::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;}
+.st-nuevo{background:#eef0f2;color:#8a9098;}
 .st-borrador{background:#eef0ea;color:#7d8a6e;}
 .st-enviada{background:#e7eef6;color:#4f7099;}
 .st-negociacion{background:#fbf1e0;color:#b3853a;}
@@ -106,9 +107,10 @@ tr.ver-child.hide{display:none;}
 .pr-media{background:#eef0ea;color:#7d8a6e;}
 .pr-baja{background:#eef0f2;color:#8a9098;}
 /* estado oportunidades */
-.os-nuevo{background:#e7eef6;color:#4f7099;}
-.os-en_proceso{background:#fbf1e0;color:#b3853a;}
-.os-cotizada{background:#eceae1;color:#7c6f86;}
+.os-nuevo{background:#eef0f2;color:#8a9098;}
+.os-borrador{background:#eef0ea;color:#7d8a6e;}
+.os-enviada{background:#e7eef6;color:#4f7099;}
+.os-negociacion{background:#fbf1e0;color:#b3853a;}
 .os-ganada{background:#e6f1e3;color:#4f8a53;}
 .os-perdida{background:#f6ebea;color:#b0584f;}
 /* estado prospectos */
@@ -370,6 +372,10 @@ textarea.inp{resize:vertical;min-height:60px;}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
         Cotizaciones
       </button>
+      <button class="navbtn" data-view="catalog">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 4 7v10l8 4 8-4V7z"/><path d="M4 7l8 4 8-4M12 11v10"/></svg>
+        Catálogo
+      </button>
       <div class="nav-group-lbl">Ventas</div>
       <button class="navbtn" data-view="dashboard_ventas">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
@@ -387,10 +393,6 @@ textarea.inp{resize:vertical;min-height:60px;}
       <button class="navbtn" data-view="clients">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-5 6-5s6 1.7 6 5"/><path d="M16 5.5a3 3 0 0 1 0 5.4M18 20c0-2.4-1-4-2.5-4.7"/></svg>
         Clientes
-      </button>
-      <button class="navbtn" data-view="catalog">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 4 7v10l8 4 8-4V7z"/><path d="M4 7l8 4 8-4M12 11v10"/></svg>
-        Catálogo
       </button>
     </nav>
     <div class="sp"></div>
@@ -450,11 +452,12 @@ const SETTINGS = {
 SETTINGS.iva = SETTINGS.ivaUSD; // compat: texto por defecto inicial (USD)
 function ivaDefault(cur){ return cur==='ARS' ? SETTINGS.ivaARS : SETTINGS.ivaUSD; }
 const STATES = [
-  {id:'borrador',  label:'Borrador'},
-  {id:'enviada',   label:'Enviada'},
-  {id:'negociacion',label:'Negociación'},
-  {id:'ganada',    label:'Ganada'},
-  {id:'perdida',   label:'Perdida'},
+  {id:'nuevo',      label:'Nuevo - Pendiente'},
+  {id:'borrador',   label:'En proceso - Borrador'},
+  {id:'enviada',    label:'Cotizado - Enviado'},
+  {id:'negociacion',label:'En negociación'},
+  {id:'ganada',     label:'Ganado'},
+  {id:'perdida',    label:'Perdido'},
 ];
 const stLabel = id => (STATES.find(s=>s.id===id)||STATES[0]).label;
 
@@ -876,11 +879,27 @@ function groupQuotes(list){
 
 VIEWS.quotes = function(){
   setHeader('Rental','Cotizaciones y seguimiento',
-    `<button class="btn" onclick="newQuote()">${ICO.plus} Nueva cotización</button>`);
+    `<button class="btn" onclick="newOppRental()">${ICO.plus} Nueva oportunidad</button>
+     <button class="btn ghost" onclick="newQuote()">${ICO.plus} Nueva cotización</button>`);
+
+  // Oportunidades de rental (o ambas) que todavía NO tienen cotización formal vinculada
+  let opps = DB.opps.filter(o=> (o.unidad==='rental'||o.unidad==='ambas') && !o.cotizacionId);
+  // Cotizaciones formales (tabla cotizaciones)
   let list=[...DB.quotes];
-  if(quoteFilter!=='all') list=list.filter(x=>x.state===quoteFilter);
-  if(quoteSearch) list=list.filter(x=>(x.client+' '+x.ref+' '+(x.attn||'')).toLowerCase().includes(quoteSearch.toLowerCase()));
+
+  // filtro por estado (aplica a ambos)
+  if(quoteFilter!=='all'){
+    list=list.filter(x=>x.state===quoteFilter);
+    opps=opps.filter(o=>o.state===quoteFilter);
+  }
+  if(quoteSearch){
+    const q=quoteSearch.toLowerCase();
+    list=list.filter(x=>(x.client+' '+x.ref+' '+(x.attn||'')).toLowerCase().includes(q));
+    opps=opps.filter(o=>(oppClientName(o)+' '+(o.ref||'')+' '+(o.title||'')).toLowerCase().includes(q));
+  }
   const groups = groupQuotes(list);
+  const hayAlgo = groups.length || opps.length;
+
   C().innerHTML = `
     <div class="toolbar">
       <div class="search">${ICO.search}<input id="qSearch" placeholder="Buscar por cliente o referencia…" value="${esc(quoteSearch)}"></div>
@@ -890,19 +909,51 @@ VIEWS.quotes = function(){
       </div>
     </div>
     <div class="card">
-      ${groups.length? `<table class="grid">
+      ${hayAlgo? `<table class="grid">
         <thead><tr><th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th><th>Estado</th><th class="r">Total</th><th class="r">Fecha</th><th></th></tr></thead>
-        <tbody>${groups.map(rowGroup).join('')}</tbody></table>`
-        : emptyState('Sin resultados','Probá con otro filtro o creá una nueva cotización.')}
+        <tbody>${opps.map(rowOppRental).join('')}${groups.map(rowGroup).join('')}</tbody></table>`
+        : emptyState('Sin resultados','Probá con otro filtro, o creá una nueva oportunidad o cotización.')}
     </div>`;
   const s=document.getElementById('qSearch');
   s.oninput=()=>{ quoteSearch=s.value; const p=s.selectionStart; VIEWS.quotes(); const n=document.getElementById('qSearch'); n.focus(); n.setSelectionRange(p,p); };
   document.querySelectorAll('.pill').forEach(p=>p.onclick=()=>{ quoteFilter=p.dataset.f; VIEWS.quotes(); });
   document.querySelectorAll('.state-sel').forEach(sel=>{
-    sel.onchange=e=>{ e.stopPropagation(); setQuoteState(sel.dataset.id, sel.value); };
+    if(sel.classList.contains('opp-state-sel')){
+      sel.onchange=async e=>{ e.stopPropagation();
+        try{ await SB.updateOpp(sel.dataset.oid,{estado:sel.value}); toast('Estado actualizado'); await reloadDB(); VIEWS.quotes(); }
+        catch(err){ toast('Error: '+err.message); }
+      };
+    } else {
+      sel.onchange=e=>{ e.stopPropagation(); setQuoteState(sel.dataset.id, sel.value); };
+    }
     sel.onclick=e=>e.stopPropagation();
   });
+  // filas de oportunidad rental: abren el detalle de oportunidad
+  C().querySelectorAll('tr.opp-row').forEach(tr=> tr.onclick=()=> openOpp(tr.dataset.id));
 };
+
+// Fila de una oportunidad de rental dentro de la lista de Rental (aún sin cotización)
+function rowOppRental(o){
+  const estadoSel = STATES.map(s=>`<option value="${s.id}" ${s.id===o.state?'selected':''}>${s.label}</option>`).join('');
+  return `<tr class="opp-row clickable" data-id="${o.id}">
+    <td><strong>${esc(o.ref||'—')}</strong> <span class="help" style="font-size:10px">oportunidad</span></td>
+    <td>${esc(oppClientName(o))}</td>
+    <td>${esc(o.title||'—')}</td>
+    <td>${esc(o.comercial||'—')}</td>
+    <td><select class="state-sel opp-state-sel" data-oid="${o.id}" onclick="event.stopPropagation()">${estadoSel}</select></td>
+    <td class="r">${o.valor!=null?('$ '+fmt(o.valor)):'—'}</td>
+    <td class="r">${o.fechaLimite?fmtFecha(o.fechaLimite):new Date(o.created).toLocaleDateString('es-AR')}</td>
+    <td></td>
+  </tr>`;
+}
+
+function newOppRental(){
+  const o = { id:null, clientId:'', unidad:'rental', tipo:'Pedido de cotización', title:'',
+    state:'nuevo', prioridad:'media', fechaLimite:'', valor:null, moneda:'ARS', comercial:'', notas:'' };
+  openModal('Nueva oportunidad de rental', oppFormBody(o),
+    `<button class="btn ghost" onclick="closeModal()">Cancelar</button>
+     <button class="btn" onclick="saveNewOppFrom('quotes')">Crear</button>`);
+}
 
 // Devuelve el HTML de un grupo: fila principal (versión más nueva) + versiones anteriores desplegables
 function rowGroup(g){
@@ -1092,8 +1143,8 @@ async function delCat(id){
 }
 
 /* ================= OPORTUNIDADES ================= */
-const OPP_ESTADOS = ['nuevo','en_proceso','cotizada','ganada','perdida'];
-const OPP_ESTADO_LBL = { nuevo:'Nuevo', en_proceso:'En proceso', cotizada:'Cotizada', ganada:'Ganada', perdida:'Perdida' };
+const OPP_ESTADOS = ['nuevo','borrador','enviada','negociacion','ganada','perdida'];
+const OPP_ESTADO_LBL = { nuevo:'Nuevo - Pendiente', borrador:'En proceso - Borrador', enviada:'Cotizado - Enviado', negociacion:'En negociación', ganada:'Ganado', perdida:'Perdido' };
 const OPP_PRIOS = ['urgente','alta','media','baja'];
 const OPP_PRIO_LBL = { urgente:'Urgente', alta:'Alta', media:'Media', baja:'Baja' };
 const OPP_TIPOS = ['Licitación pública','Licitación privada','Pedido de cotización','Notificación de proceso','Consulta','Otro'];
@@ -2116,7 +2167,7 @@ window.doLogin=doLogin;
 window.newOpp=newOpp; window.saveNewOpp=saveNewOpp; window.openOpp=openOpp; window.editOpp=editOpp;
 window.saveEditOpp=saveEditOpp; window.delOpp=delOpp; window.addActModal=addActModal; window.saveAct=saveAct;
 window.newProspecto=newProspecto; window.saveNewProspecto=saveNewProspecto; window.openProspecto=openProspecto;
-window.newOppVentas=newOppVentas; window.saveNewOppFrom=saveNewOppFrom;
+window.newOppVentas=newOppVentas; window.saveNewOppFrom=saveNewOppFrom; window.newOppRental=newOppRental;
 window.editProspecto=editProspecto; window.saveEditProspecto=saveEditProspecto; window.backToEmpresas=backToEmpresas;
 window.addProspGestion=addProspGestion; window.saveProspGestion=saveProspGestion; window.convertirProspecto=convertirProspecto;
 
