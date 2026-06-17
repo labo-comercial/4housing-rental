@@ -75,6 +75,10 @@ table.grid th.c,table.grid td.c{text-align:center;}
 table.grid td{padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:middle;}
 table.grid tbody tr:last-child td{border-bottom:none;}
 table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
+table.grid th.th-sort{cursor:pointer;user-select:none;white-space:nowrap;}
+table.grid th.th-sort:hover{color:var(--olive-deep);background:#f3f1e7;}
+table.grid th.th-active{color:var(--olive-deep);}
+table.grid th .th-arrow{font-size:9px;margin-left:2px;}
 /* agrupación de versiones */
 .ver-toggle{display:inline-flex;align-items:center;gap:7px;cursor:pointer;}
 .ver-toggle .chev{width:15px;height:15px;color:var(--olive-deep);flex:none;transition:transform .18s;}
@@ -324,6 +328,15 @@ textarea.inp{resize:vertical;min-height:60px;}
   .page::after{content:none;}
   /* nada después de .page debe forzar otra página */
   .toast,.modal-bg{display:none !important;}
+
+  /* Impresión del catálogo: oculta toda la app y muestra solo la capa */
+  body.printing-catalog .app{display:none !important;}
+  body.printing-catalog #catPrintLayer{display:block !important;}
+}
+/* La capa de impresión del catálogo no se ve en pantalla */
+#catPrintLayer{display:none;}
+@media print{
+  #catPrintLayer .page{box-shadow:none;margin:0 !important;}
 }
 @media(max-width:1100px){
   .cotz-layout{grid-template-columns:1fr;}
@@ -606,10 +619,18 @@ function rowToQuote(r){
   };
 }
 function clientToRow(c){
-  return { nombre:c.name, atencion:c.attn, email:c.email, telefono:c.phone, notas:c.notes };
+  return {
+    nombre:c.name, atencion:c.attn, email:c.email, telefono:c.phone, notas:c.notes,
+    cuit:c.cuit||null, portal:c.portal||null,
+    contactos: Array.isArray(c.contactos) ? c.contactos : []
+  };
 }
 function rowToClient(r){
-  return { id:r.id, name:r.nombre||'', attn:r.atencion||'', email:r.email||'', phone:r.telefono||'', notes:r.notas||'' };
+  return {
+    id:r.id, name:r.nombre||'', attn:r.atencion||'', email:r.email||'', phone:r.telefono||'', notes:r.notas||'',
+    cuit:r.cuit||'', portal:r.portal||'',
+    contactos: Array.isArray(r.contactos) ? r.contactos : []
+  };
 }
 function catToRow(c){ return { nombre:c.name, precio:num(c.price), unidad:c.unit, orden:c.orden||0, zona:c.zona||null }; }
 function rowToCat(r){ return { id:r.id, name:r.nombre||'', price:Number(r.precio)||0, unit:r.unidad||'mes', orden:r.orden||0, zona:r.zona||'' }; }
@@ -702,8 +723,28 @@ function isoToText(iso){
   if(!y||!m||!d) return iso;
   return `${d} de ${MESES[m-1]} de ${y}`;
 }
-function todayStr(){ return isoToText(todayISO()); }
-function refStr(seq, ver){ return String(seq).padStart(4,'0')+' – VER'+String(ver||1).padStart(2,'0'); }
+// ---- Encabezado de columna ordenable ----
+// Devuelve un <th> clickeable que alterna asc/desc sobre el objeto de orden
+// (clientSort, quoteSort, etc.) y re-renderiza la vista indicada.
+function sortTh(label, col, sortVar, renderCall, cls){
+  const sort = window[sortVar];
+  const active = sort && sort.col===col;
+  const arrow = active ? (sort.dir===1?' ▲':' ▼') : '';
+  const cl = cls ? ` class="${cls}"` : '';
+  return `<th${cl} class="th-sort${active?' th-active':''}" onclick="toggleSort('${sortVar}','${col}',()=>{${renderCall}()})" title="Ordenar por ${label}">${label}<span class="th-arrow">${arrow}</span></th>`;
+}
+function toggleSort(sortVar, col, render){
+  const s = window[sortVar];
+  if(s.col===col) s.dir = -s.dir; else { s.col=col; s.dir=1; }
+  if(typeof render==='function') render();
+}
+// Cliente: TODO EN MAYÚSCULA
+function upperName(s){ return String(s==null?'':s).toLocaleUpperCase('es-AR'); }
+// Resto de campos: Primera Letra De Cada Palabra En Mayúscula, resto minúscula
+function titleCase(s){
+  return String(s==null?'':s).toLocaleLowerCase('es-AR')
+    .replace(/\b[\p{L}]/gu, c => c.toLocaleUpperCase('es-AR'));
+}
 
 /* ================= ROUTER ================= */
 const VIEWS = {};
@@ -886,6 +927,7 @@ function emptyState(t,s){
 
 /* ================= QUOTES LIST ================= */
 let quoteFilter='all', quoteSearch='';
+window.quoteSort = { col:'fecha', dir:-1 }; // por defecto: más recientes primero
 
 // Agrupa cotizaciones por número de oferta (seq). Devuelve grupos ordenados,
 // cada uno con su versión más reciente como "principal" y el resto como hijas.
@@ -901,8 +943,27 @@ function groupQuotes(list){
     versions.sort((a,b)=>(b.version||parseVer(b.ref)||1)-(a.version||parseVer(a.ref)||1)); // mayor versión primero
     groups.push({ key, seq:versions[0].seq, main:versions[0], versions });
   });
-  // ordenar grupos por la cotización más reciente de cada uno
-  groups.sort((a,b)=> Math.max(...b.versions.map(v=>v.created)) - Math.max(...a.versions.map(v=>v.created)));
+  // orden por columna (sobre la versión principal de cada grupo)
+  const s = window.quoteSort;
+  const keyfn = (g)=>{
+    const m=g.main;
+    switch(s.col){
+      case 'ref':      return (m.seq!=null?m.seq:0);
+      case 'client':   return (m.client||'').toLowerCase();
+      case 'attn':     return (m.attn||'').toLowerCase();
+      case 'comercial':return (m.comercial||'').toLowerCase();
+      case 'state':    return (stLabel(m.state)||'').toLowerCase();
+      case 'total':    return quoteTotal(m)||0;
+      case 'fecha':    return Math.max(...g.versions.map(v=>v.created));
+      default:         return Math.max(...g.versions.map(v=>v.created));
+    }
+  };
+  groups.sort((a,b)=>{
+    const va=keyfn(a), vb=keyfn(b);
+    if(va<vb) return -1*s.dir;
+    if(va>vb) return  1*s.dir;
+    return 0;
+  });
   return groups;
 }
 
@@ -923,8 +984,14 @@ VIEWS.quotes = function(){
   }
   if(quoteSearch){
     const q=quoteSearch.toLowerCase();
-    list=list.filter(x=>(x.client+' '+x.ref+' '+(x.attn||'')).toLowerCase().includes(q));
-    opps=opps.filter(o=>(oppClientName(o)+' '+(o.ref||'')+' '+(o.title||'')).toLowerCase().includes(q));
+    const hay = x => {
+      const items=(x.items||[]).map(it=>`${it.detail||''} ${it.qty||''} ${it.plazo||''} ${it.price||''}`).join(' ');
+      return (`${x.client||''} ${x.ref||''} ${x.attn||''} ${x.email||''} ${x.phone||''} ${x.comercial||''} ${x.title||''} `+
+        `${x.pago||''} ${x.validez||''} ${x.entrega||''} ${x.minimo||''} ${x.nota1||''} ${x.nota2||''} ${x.ivanote||''} `+
+        `${stLabel(x.state)||''} ${items}`).toLowerCase().includes(q);
+    };
+    list=list.filter(hay);
+    opps=opps.filter(o=>(`${oppClientName(o)} ${o.ref||''} ${o.title||''} ${o.tipo||''} ${o.notas||''} ${o.comercial||''}`).toLowerCase().includes(q));
   }
   if(filtroVendedor){
     list=list.filter(x=>x.comercial===filtroVendedor);
@@ -935,7 +1002,7 @@ VIEWS.quotes = function(){
 
   C().innerHTML = `
     <div class="toolbar">
-      <div class="search">${ICO.search}<input id="qSearch" placeholder="Buscar por cliente o referencia…" value="${esc(quoteSearch)}"></div>
+      <div class="search">${ICO.search}<input id="qSearch" placeholder="Buscar en todos los campos de la cotización…" value="${esc(quoteSearch)}"></div>
       ${vendedorFilterSelect('qVend')}
       <div class="filterpills">
         <button class="pill ${quoteFilter==='all'?'active':''}" data-f="all">Todas</button>
@@ -944,7 +1011,16 @@ VIEWS.quotes = function(){
     </div>
     <div class="card">
       ${hayAlgo? `<table class="grid">
-        <thead><tr><th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th><th>Estado</th><th class="r">Total</th><th class="r">Fecha</th><th></th></tr></thead>
+        <thead><tr>
+          ${sortTh('Ref.','ref','quoteSort','VIEWS.quotes')}
+          ${sortTh('Cliente','client','quoteSort','VIEWS.quotes')}
+          ${sortTh('Atención','attn','quoteSort','VIEWS.quotes')}
+          ${sortTh('Comercial','comercial','quoteSort','VIEWS.quotes')}
+          ${sortTh('Estado','state','quoteSort','VIEWS.quotes')}
+          ${sortTh('Total','total','quoteSort','VIEWS.quotes','r')}
+          ${sortTh('Fecha','fecha','quoteSort','VIEWS.quotes','r')}
+          <th></th>
+        </tr></thead>
         <tbody>${opps.map(rowOppRental).join('')}${groups.map(rowGroup).join('')}</tbody></table>`
         : emptyState('Sin resultados','Probá con otro filtro, o creá una nueva oportunidad o cotización.')}
     </div>`;
@@ -972,9 +1048,9 @@ function rowOppRental(o){
   const estadoSel = STATES.map(s=>`<option value="${s.id}" ${s.id===o.state?'selected':''}>${s.label}</option>`).join('');
   return `<tr class="opp-row clickable" data-id="${o.id}">
     <td><strong>${esc(o.ref||'—')}</strong> <span class="help" style="font-size:10px">oportunidad</span></td>
-    <td>${esc(oppClientName(o))}</td>
-    <td>${esc(o.title||'—')}</td>
-    <td>${esc(o.comercial||'—')}</td>
+    <td>${esc(upperName(oppClientName(o)))}</td>
+    <td>${esc(titleCase(o.title)||'—')}</td>
+    <td>${esc(titleCase(o.comercial)||'—')}</td>
     <td><select class="state-sel opp-state-sel" data-oid="${o.id}" onclick="event.stopPropagation()">${estadoSel}</select></td>
     <td class="r">${o.valor!=null?('$ '+fmt(o.valor)):'—'}</td>
     <td class="r">${o.fechaLimite?fmtFecha(o.fechaLimite):new Date(o.created).toLocaleDateString('es-AR')}</td>
@@ -1023,9 +1099,9 @@ function rowQuote(x, o){
   if(o.child){
     return `<tr class="clickable ver-child ${o.hidden?'hide':''}" data-key="${o.groupKey}" onclick="editQuote('${x.id}')">
       <td><span class="ver-tag">VER${String(ver).padStart(2,'0')}</span></td>
-      <td>${esc(x.client||'—')}</td>
-      <td>${esc(x.attn||'—')}</td>
-      <td>${esc(x.comercial||'—')}</td>
+      <td>${esc(upperName(x.client)||'—')}</td>
+      <td>${esc(titleCase(x.attn)||'—')}</td>
+      <td>${esc(titleCase(x.comercial)||'—')}</td>
       <td onclick="event.stopPropagation()">
         <span class="badge st-${x.state}">${stLabel(x.state)}</span>
         <select class="state-sel" data-id="${x.id}" title="Cambiar estado">${opts}</select>
@@ -1046,9 +1122,9 @@ function rowQuote(x, o){
     : `<b>${esc(x.ref)}</b>${origenTag}`;
   return `<tr class="clickable ${o.multi?'ver-main ver-grp':''} ${o.open?'open':''}" ${o.multi?`data-key="${o.groupKey}"`:''} onclick="editQuote('${x.id}')">
     <td>${refCell}${o.multi?`<span class="ver-badge">VER${String(ver).padStart(2,'0')}</span>`:''}</td>
-    <td>${esc(x.client||'—')}</td>
-    <td>${esc(x.attn||'—')}</td>
-    <td>${esc(x.comercial||'—')}</td>
+    <td>${esc(upperName(x.client)||'—')}</td>
+    <td>${esc(titleCase(x.attn)||'—')}</td>
+    <td>${esc(titleCase(x.comercial)||'—')}</td>
     <td onclick="event.stopPropagation()">
       <span class="badge st-${x.state}">${stLabel(x.state)}</span>
       <select class="state-sel" data-id="${x.id}" title="Cambiar estado">${opts}</select>
@@ -1083,21 +1159,61 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;',
 
 /* ================= CLIENTS ================= */
 let clientSearch='';
+window.clientSort = { col:'name', dir:1 };
 VIEWS.clients = function(){
   setHeader('Clientes','Base de contactos',
     `<button class="btn" onclick="clientForm()">${ICO.plus} Nuevo cliente</button>`);
-  let list=[...DB.clients].sort((a,b)=>a.name.localeCompare(b.name));
-  if(clientSearch) list=list.filter(c=>(c.name+' '+(c.attn||'')+' '+(c.email||'')).toLowerCase().includes(clientSearch.toLowerCase()));
+  let list=[...DB.clients];
+  if(clientSearch){
+    const q=clientSearch.toLowerCase();
+    list=list.filter(c=>{
+      const cont=(c.contactos||[]).map(k=>`${k.nombre} ${k.cargo} ${k.email} ${k.telefono}`).join(' ');
+      return (`${c.name} ${c.attn||''} ${c.email||''} ${c.phone||''} ${c.cuit||''} ${c.portal||''} ${cont} ${c.notes||''}`)
+        .toLowerCase().includes(q);
+    });
+  }
+  const get = (c,col)=>{
+    if(col==='name')  return (c.name||'').toLowerCase();
+    if(col==='cuit')  return (c.cuit||'').toLowerCase();
+    if(col==='email') return (c.email||'').toLowerCase();
+    if(col==='phone') return (c.phone||'').toLowerCase();
+    if(col==='quotes')return DB.quotes.filter(q=>q.clientId===c.id).length;
+    return '';
+  };
+  list.sort((a,b)=>{
+    const va=get(a,clientSort.col), vb=get(b,clientSort.col);
+    if(va<vb) return -1*clientSort.dir;
+    if(va>vb) return  1*clientSort.dir;
+    return 0;
+  });
   C().innerHTML = `
-    <div class="toolbar"><div class="search">${ICO.search}<input id="cSearch" placeholder="Buscar cliente…" value="${esc(clientSearch)}"></div></div>
+    <div class="toolbar"><div class="search">${ICO.search}<input id="cSearch" placeholder="Buscar por empresa, CUIT, contacto, email…" value="${esc(clientSearch)}"></div></div>
     <div class="card">
       ${list.length? `<table class="grid">
-        <thead><tr><th>Cliente</th><th>Atención</th><th>Email</th><th>Teléfono</th><th class="c">Cotiz.</th><th class="r"></th></tr></thead>
+        <thead><tr>
+          ${sortTh('Cliente','name','clientSort','VIEWS.clients')}
+          ${sortTh('CUIT','cuit','clientSort','VIEWS.clients')}
+          <th>Contactos</th>
+          ${sortTh('Email','email','clientSort','VIEWS.clients')}
+          ${sortTh('Teléfono','phone','clientSort','VIEWS.clients')}
+          <th>Portal</th>
+          ${sortTh('Cotiz.','quotes','clientSort','VIEWS.clients','c')}
+          <th class="r"></th>
+        </tr></thead>
         <tbody>${list.map(c=>{
           const n=DB.quotes.filter(q=>q.clientId===c.id).length;
+          const conts=(c.contactos||[]);
+          const contCell = conts.length
+            ? conts.map(k=>`${esc(titleCase(k.nombre)||'—')}${k.cargo?` <span class="help" style="font-size:10px">${esc(titleCase(k.cargo))}</span>`:''}`).join('<br>')
+            : '—';
+          const portalCell = c.portal
+            ? `<a href="${esc(c.portal)}" target="_blank" rel="noopener">Abrir</a>` : '—';
           return `<tr>
-            <td><b>${esc(c.name)}</b></td><td>${esc(c.attn||'—')}</td>
+            <td><b>${esc(upperName(c.name))}</b></td>
+            <td>${esc(c.cuit||'—')}</td>
+            <td>${contCell}</td>
             <td>${esc(c.email||'—')}</td><td>${esc(c.phone||'—')}</td>
+            <td>${portalCell}</td>
             <td class="c">${n}</td>
             <td class="r"><button class="btn ghost sm" onclick="clientForm('${c.id}')">Editar</button>
             <button class="btn sm" onclick="newQuote('${c.id}')">Cotizar</button></td>
@@ -1108,21 +1224,66 @@ VIEWS.clients = function(){
   s.oninput=()=>{ clientSearch=s.value; const p=s.selectionStart; VIEWS.clients(); const n=document.getElementById('cSearch'); n.focus(); n.setSelectionRange(p,p); };
 };
 function clientForm(id){
-  const c = id? DB.clients.find(x=>x.id===id) : {name:'',attn:'',email:'',phone:'',notes:''};
+  const c = id? DB.clients.find(x=>x.id===id) : {name:'',attn:'',email:'',phone:'',notes:'',cuit:'',portal:'',contactos:[]};
+  CLIENT_CONTACTS = (c.contactos && c.contactos.length)
+    ? c.contactos.map(k=>({nombre:k.nombre||'',cargo:k.cargo||'',email:k.email||'',telefono:k.telefono||''}))
+    : [];
   openModal(id?'Editar cliente':'Nuevo cliente', `
     <div class="field"><label>Empresa / Cliente</label><input id="f_name" value="${esc(c.name)}" placeholder="Razón social"></div>
     <div class="frow c2">
-      <div class="field"><label>Atención (contacto)</label><input id="f_attn" value="${esc(c.attn)}"></div>
+      <div class="field"><label>CUIT</label><input id="f_cuit" value="${esc(c.cuit||'')}" placeholder="30-12345678-9"></div>
       <div class="field"><label>Teléfono</label><input id="f_phone" value="${esc(c.phone)}"></div>
     </div>
     <div class="field"><label>Email</label><input id="f_email" value="${esc(c.email)}"></div>
+    <div class="field"><label>Portal / Plataforma de contrataciones (URL)</label><input id="f_portal" value="${esc(c.portal||'')}" placeholder="https://..."></div>
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between">Contactos
+        <button type="button" class="btn ghost sm" onclick="addClientContact()">${ICO.plus} Agregar contacto</button>
+      </label>
+      <div id="contactsList"></div>
+    </div>
     <div class="field"><label>Notas</label><textarea id="f_notes">${esc(c.notes||'')}</textarea></div>
   `, `${id?`<button class="btn danger" onclick="delClient('${id}')">Eliminar</button>`:''}
      <button class="btn ghost" onclick="closeModal()">Cancelar</button>
      <button class="btn" onclick="saveClient('${id||''}')">Guardar</button>`);
+  renderClientContacts();
 }
+let CLIENT_CONTACTS = [];
+function renderClientContacts(){
+  const el = document.getElementById('contactsList'); if(!el) return;
+  if(!CLIENT_CONTACTS.length){
+    el.innerHTML = `<div class="help" style="padding:4px 0">Sin contactos. Agregá los que necesites con nombre, cargo, email y teléfono.</div>`;
+    return;
+  }
+  el.innerHTML = CLIENT_CONTACTS.map((k,i)=>`
+    <div class="card" style="margin:8px 0;position:relative">
+      <div class="card-b" style="padding:12px">
+        <div class="frow c2">
+          <div class="field" style="margin:0"><label>Nombre</label><input class="kc" data-i="${i}" data-k="nombre" value="${esc(k.nombre)}"></div>
+          <div class="field" style="margin:0"><label>Cargo</label><input class="kc" data-i="${i}" data-k="cargo" value="${esc(k.cargo)}"></div>
+        </div>
+        <div class="frow c2" style="margin-top:8px">
+          <div class="field" style="margin:0"><label>Email</label><input class="kc" data-i="${i}" data-k="email" value="${esc(k.email)}"></div>
+          <div class="field" style="margin:0"><label>Teléfono</label><input class="kc" data-i="${i}" data-k="telefono" value="${esc(k.telefono)}"></div>
+        </div>
+        <button type="button" class="btn ghost sm" style="margin-top:10px" onclick="delClientContact(${i})">Quitar contacto</button>
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('.kc').forEach(inp=>{
+    inp.oninput = e=>{ const i=+e.target.dataset.i, k=e.target.dataset.k; CLIENT_CONTACTS[i][k]=e.target.value; };
+  });
+}
+function addClientContact(){ CLIENT_CONTACTS.push({nombre:'',cargo:'',email:'',telefono:''}); renderClientContacts(); }
+function delClientContact(i){ CLIENT_CONTACTS.splice(i,1); renderClientContacts(); }
 async function saveClient(id){
-  const c={ name:val('f_name').trim(), attn:val('f_attn').trim(), email:val('f_email').trim(), phone:val('f_phone').trim(), notes:val('f_notes').trim() };
+  const contactos = CLIENT_CONTACTS
+    .map(k=>({ nombre:(k.nombre||'').trim(), cargo:(k.cargo||'').trim(), email:(k.email||'').trim(), telefono:(k.telefono||'').trim() }))
+    .filter(k=>k.nombre||k.cargo||k.email||k.telefono);
+  const c={
+    name:val('f_name').trim(), attn:val('f_attn')?val('f_attn').trim():'',
+    email:val('f_email').trim(), phone:val('f_phone').trim(), notes:val('f_notes').trim(),
+    cuit:val('f_cuit').trim(), portal:val('f_portal').trim(), contactos
+  };
   if(!c.name){ toast('Ingresá el nombre del cliente'); return; }
   try{
     if(id){ await SB.updateClient(id, clientToRow(c)); }
@@ -1139,12 +1300,13 @@ async function delClient(id){
     closeModal(); toast('Cliente eliminado'); VIEWS.clients();
   }catch(e){ toast('Error al eliminar: '+e.message); }
 }
-function val(id){ return document.getElementById(id).value; }
+function val(id){ const el=document.getElementById(id); return el?el.value:''; }
 
 /* ================= CATALOG ================= */
 VIEWS.catalog = function(){
   setHeader('Catálogo','Módulos y servicios con precio de referencia',
-    `<button class="btn" onclick="addCat()">${ICO.plus} Agregar ítem</button>`);
+    `<button class="btn ghost" onclick="printCatalog()">${ICO.print} Imprimir / PDF</button>
+     <button class="btn" onclick="addCat()">${ICO.plus} Agregar ítem</button>`);
   C().innerHTML = `
     <div class="card"><div class="card-b">
       <div class="catrow-h"><div>Descripción</div><div>Precio USD</div><div>Unidad</div><div>Zona</div><div></div></div>
@@ -1185,6 +1347,66 @@ async function delCat(id){
   catch(e){ toast('Error al eliminar: '+e.message); }
 }
 
+// Imprime el catálogo de Rental como PDF con encabezado y pie de 4housing,
+// listo para enviar a un cliente. Reutiliza la estética del PDF de cotización.
+function printCatalog(){
+  const items = [...DB.catalog].sort((a,b)=>(a.orden||0)-(b.orden||0));
+  const rows = items.map((c,i)=>`
+    <tr>
+      <td class="it-num">${String(i+1).padStart(2,'0')}</td>
+      <td class="it-detail">${esc(c.name)||'&nbsp;'}${c.zona?` <span style="color:#8a9678;font-size:11px">[${esc(c.zona)}]</span>`:''}</td>
+      <td class="it-c">${esc(c.unit||'mes')}</td>
+      <td class="it-r it-sub">${fmt(num(c.price))}</td>
+    </tr>`).join('');
+
+  const html = `
+  <div class="page catalog-page">
+    <div class="head">
+      <div class="head-logo"><div class="logo"><img src="${LOGO}" class="logo-img" alt="4housing"></div></div>
+      <div class="col-div head-doc">
+        <div class="doc-title">CATÁLOGO RENTAL</div>
+        <div class="doc-rule"></div>
+        <div class="doc-ref">Precios de referencia</div>
+      </div>
+      <div class="col-div head-date">${ICO.cal}<div class="meta-label">FECHA</div><div class="meta-val">${esc(todayStr())}</div></div>
+      <div class="col-div head-tuv"><img src="${ISO_SEAL}" class="head-tuv-img" alt="ISO 9001 14001 45001 TÜV NORD"></div>
+    </div>
+    <div class="sec"><span class="num">01</span><span class="t">MÓDULOS Y SERVICIOS</span><span class="ln"></span></div>
+    <table class="items no-plazo">
+      <thead><tr>
+        <th style="width:58px">ÍTEM</th><th>DESCRIPCIÓN</th>
+        <th class="c">UNIDAD</th><th class="r">PRECIO (USD)</th>
+      </tr></thead>
+      <tbody>${rows || `<tr><td colspan="4" style="padding:20px;text-align:center;color:#8a8578">Sin ítems en el catálogo.</td></tr>`}</tbody>
+    </table>
+    <div class="note">Valores expresados en USD (Dólares oficiales BNA vendedor billete). IVA no incluido (21%). Precios de referencia sujetos a confirmación según disponibilidad de stock y plazo de alquiler.</div>
+    <div class="foot">
+      <div class="foot-l"><img src="${LOGO}" class="foot-logo" alt="4housing"></div>
+      <div class="foot-c">
+        <div class="fi">${ICO.mail}<span>${esc(SETTINGS.email)}</span></div>
+        <div class="fi">${ICO.web}<span>${esc(SETTINGS.web)}</span></div>
+        <div class="fi">${ICO.phone}<span>${esc(SETTINGS.tel)}</span></div>
+      </div>
+    </div>
+  </div>`;
+
+  // Monta una capa de impresión temporal (visible solo al imprimir)
+  let layer = document.getElementById('catPrintLayer');
+  if(!layer){ layer=document.createElement('div'); layer.id='catPrintLayer'; document.body.appendChild(layer); }
+  layer.innerHTML = html;
+  document.body.classList.add('printing-catalog');
+  const prevTitle = document.title;
+  document.title = `Catalogo-Rental-4housing-${todayISO()}`;
+  setTimeout(()=>{
+    window.print();
+    setTimeout(()=>{
+      document.body.classList.remove('printing-catalog');
+      layer.innerHTML='';
+      document.title = prevTitle;
+    }, 400);
+  }, 60);
+}
+
 /* ================= OPORTUNIDADES ================= */
 const OPP_ESTADOS = ['nuevo','borrador','enviada','negociacion','ganada','perdida'];
 const OPP_ESTADO_LBL = { nuevo:'Nuevo - Pendiente', borrador:'En proceso - Borrador', enviada:'Cotizado - Enviado', negociacion:'En negociación', ganada:'Ganado', perdida:'Perdido' };
@@ -1192,6 +1414,7 @@ const OPP_PRIOS = ['urgente','alta','media','baja'];
 const OPP_PRIO_LBL = { urgente:'Urgente', alta:'Alta', media:'Media', baja:'Baja' };
 const OPP_TIPOS = ['Licitación pública','Licitación privada','Pedido de cotización','Notificación de proceso','Consulta','Otro'];
 let oppFilters = { unidad:'', estado:'', prioridad:'' };
+window.oppSort = { col:'created', dir:-1 };
 
 function oppClientName(o){
   if(o.clientId){ const c=DB.clients.find(x=>x.id===o.clientId); if(c) return c.name; }
@@ -1207,6 +1430,25 @@ VIEWS.opps = function(){
   if(oppFilters.unidad)    list = list.filter(o=>o.unidad===oppFilters.unidad);
   if(oppFilters.estado)    list = list.filter(o=>o.state===oppFilters.estado);
   if(oppFilters.prioridad) list = list.filter(o=>o.prioridad===oppFilters.prioridad);
+
+  const og = (o,col)=>{
+    switch(col){
+      case 'ref':     return (o.ref||'').toLowerCase();
+      case 'client':  return oppClientName(o).toLowerCase();
+      case 'tipo':    return (o.tipo||'').toLowerCase();
+      case 'prio':    return OPP_PRIOS.indexOf(o.prioridad);
+      case 'estado':  return OPP_ESTADOS.indexOf(o.state);
+      case 'fecha':   return o.fechaLimite||'';
+      case 'valor':   return o.valor!=null?o.valor:-1;
+      default:        return o.created;
+    }
+  };
+  list.sort((a,b)=>{
+    const va=og(a,oppSort.col), vb=og(b,oppSort.col);
+    if(va<vb) return -1*oppSort.dir;
+    if(va>vb) return  1*oppSort.dir;
+    return 0;
+  });
 
   const optSel = (cur, pairs)=> pairs.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('');
 
@@ -1229,8 +1471,13 @@ VIEWS.opps = function(){
     <div class="card"><div class="card-b" style="padding:0">
       ${list.length ? `<table class="grid">
         <thead><tr>
-          <th>Ref.</th><th>Cliente / Organismo</th><th>Tipo</th>
-          <th>Prioridad</th><th>Estado</th><th>Fecha límite</th><th class="r">Valor</th>
+          ${sortTh('Ref.','ref','oppSort','VIEWS.opps')}
+          ${sortTh('Cliente / Organismo','client','oppSort','VIEWS.opps')}
+          ${sortTh('Tipo','tipo','oppSort','VIEWS.opps')}
+          ${sortTh('Prioridad','prio','oppSort','VIEWS.opps')}
+          ${sortTh('Estado','estado','oppSort','VIEWS.opps')}
+          ${sortTh('Fecha límite','fecha','oppSort','VIEWS.opps')}
+          ${sortTh('Valor','valor','oppSort','VIEWS.opps','r')}
         </tr></thead>
         <tbody>${list.map(rowOpp).join('')}</tbody></table>`
       : `<div class="empty" style="padding:40px">No hay oportunidades${oppFilters.unidad||oppFilters.estado||oppFilters.prioridad?' con estos filtros':''}. Llegan automáticamente desde los mails, o podés crear una con “Nueva oportunidad”.</div>`}
@@ -1247,8 +1494,8 @@ function rowOpp(o){
   const valor = o.valor!=null ? `${o.moneda==='ARS'?'$':'USD'} ${fmt(o.valor)}` : '—';
   return `<tr class="clickable" data-id="${o.id}">
     <td><strong>${esc(o.ref||'—')}</strong>${unidadTag}</td>
-    <td>${esc(oppClientName(o))}</td>
-    <td>${esc(o.tipo||'—')}</td>
+    <td>${esc(upperName(oppClientName(o)))}</td>
+    <td>${esc(titleCase(o.tipo)||'—')}</td>
     <td><span class="badge pr-${o.prioridad}">${OPP_PRIO_LBL[o.prioridad]||o.prioridad}</span></td>
     <td><span class="badge os-${o.state}">${OPP_ESTADO_LBL[o.state]||o.state}</span></td>
     <td>${fmtFecha(o.fechaLimite)}</td>
@@ -1414,6 +1661,7 @@ async function saveAct(oppId){
 
 /* ================= VENTAS (lista unificada por estado) ================= */
 let ventasFiltroEstado = '';
+window.ventasSort = { col:'created', dir:-1 };
 
 VIEWS.ventas = function(){
   setHeader('Ventas','Seguimiento de oportunidades y cotizaciones',
@@ -1422,7 +1670,24 @@ VIEWS.ventas = function(){
   let list = DB.opps.filter(o=> o.unidad==='ventas' || o.unidad==='ambas');
   if(ventasFiltroEstado) list = list.filter(o=>o.state===ventasFiltroEstado);
   if(filtroVendedor) list = list.filter(o=>o.comercial===filtroVendedor);
-  list.sort((a,b)=> b.created - a.created);
+  const vg = (o,col)=>{
+    switch(col){
+      case 'ref':    return (o.ref||'').toLowerCase();
+      case 'client': return oppClientName(o).toLowerCase();
+      case 'tipo':   return (o.tipo||'').toLowerCase();
+      case 'prio':   return OPP_PRIOS.indexOf(o.prioridad);
+      case 'estado': return OPP_ESTADOS.indexOf(o.state);
+      case 'fecha':  return o.fechaLimite||'';
+      case 'valor':  return o.valor!=null?o.valor:-1;
+      default:       return o.created;
+    }
+  };
+  list.sort((a,b)=>{
+    const va=vg(a,ventasSort.col), vb=vg(b,ventasSort.col);
+    if(va<vb) return -1*ventasSort.dir;
+    if(va>vb) return  1*ventasSort.dir;
+    return 0;
+  });
 
   const optSel = (cur, pairs)=> pairs.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('');
 
@@ -1438,8 +1703,13 @@ VIEWS.ventas = function(){
     <div class="card"><div class="card-b" style="padding:0">
       ${list.length ? `<table class="grid">
         <thead><tr>
-          <th>Ref.</th><th>Cliente / Organismo</th><th>Tipo</th>
-          <th>Prioridad</th><th>Estado</th><th>Fecha límite</th><th class="r">Valor</th>
+          ${sortTh('Ref.','ref','ventasSort','VIEWS.ventas')}
+          ${sortTh('Cliente / Organismo','client','ventasSort','VIEWS.ventas')}
+          ${sortTh('Tipo','tipo','ventasSort','VIEWS.ventas')}
+          ${sortTh('Prioridad','prio','ventasSort','VIEWS.ventas')}
+          ${sortTh('Estado','estado','ventasSort','VIEWS.ventas')}
+          ${sortTh('Fecha límite','fecha','ventasSort','VIEWS.ventas')}
+          ${sortTh('Valor','valor','ventasSort','VIEWS.ventas','r')}
         </tr></thead>
         <tbody>${list.map(rowOpp).join('')}</tbody></table>`
       : `<div class="empty" style="padding:40px">No hay oportunidades de ventas todavía. Se crean al convertir un prospecto, o con “Nueva oportunidad”.</div>`}
@@ -1942,7 +2212,7 @@ function renderEditor(isNew){
         </div>
         <div class="field"><label>Email</label><input id="e_email" value="${esc(CUR.email)}"></div>
         <div class="frow c2">
-          <div class="field"><label>Referencia</label><input id="e_ref" value="${esc(CUR.ref)}"></div>
+          <div class="field"><label>Referencia (automática)</label><input id="e_ref" value="${esc(CUR.ref)}" readonly disabled title="El número se asigna automáticamente y no puede modificarse" style="background:#f1efe6;color:#6f6c60;cursor:not-allowed"></div>
           <div class="field"><label>Fecha</label><input id="e_date" type="date" value="${esc(CUR.dateISO)}"></div>
         </div>
         <div class="frow c2">
@@ -1985,7 +2255,7 @@ function renderEditor(isNew){
   const bind=(id,key,after)=>{ const el=document.getElementById(id);
     el.oninput=el.onchange=()=>{ CUR[key]= (el.type==='checkbox')?el.checked:el.value; if(after)after(); renderDoc(); }; };
   bind('e_clientname','client'); bind('e_attn','attn'); bind('e_phone','phone'); bind('e_email','email');
-  bind('e_ref','ref'); bind('e_date','dateISO'); bind('e_state','state'); bind('e_comercial','comercial');
+  bind('e_date','dateISO'); bind('e_state','state'); bind('e_comercial','comercial');
   bind('e_pago','pago'); bind('e_validez','validez'); bind('e_entrega','entrega'); bind('e_minimo','minimo');
   bind('e_nota1','nota1'); bind('e_nota2','nota2'); bind('e_ivanote','ivanote'); bind('e_showtotal','showTotal');
   // Moneda: además de cambiar la moneda, actualiza la leyenda del IVA si estaba en el texto por defecto
@@ -2126,6 +2396,8 @@ function fitPreview(){
 async function saveQuote(opts){
   opts = opts || {};
   CUR.client = document.getElementById('e_clientname') ? val('e_clientname').trim() : CUR.client;
+  // Rental: el nombre del cliente se guarda SIEMPRE en mayúscula
+  if(CUR.client) CUR.client = upperName(CUR.client);
   try{
     // Si el cliente escrito no existe en la base, crearlo y vincularlo
     if(CUR.client){
@@ -2134,7 +2406,7 @@ async function saveQuote(opts){
         CUR.clientId = existeCliente.id;
       } else {
         const nuevo = await SB.addClient(clientToRow({
-          name:CUR.client, attn:CUR.attn||'', email:CUR.email||'', phone:CUR.phone||'', notes:''
+          name:upperName(CUR.client), attn:CUR.attn||'', email:CUR.email||'', phone:CUR.phone||'', notes:''
         }));
         CUR.clientId = nuevo.id;
         await reloadDB(); // refresca el desplegable de clientes
@@ -2292,6 +2564,8 @@ window.newQuote=newQuote; window.editQuote=editQuote; window.newVersion=newVersi
 window.saveClient=saveClient; window.delClient=delClient; window.addCat=addCat; window.delCat=delCat;
 window.addItem=addItem; window.delItem=delItem; window.saveQuote=saveQuote; window.printQuote=printQuote;
 window.go=go; window.closeModal=closeModal; window.setQuoteState=setQuoteState; window.dashSelect=dashSelect;
+window.toggleSort=toggleSort; window.addClientContact=addClientContact; window.delClientContact=delClientContact;
+window.printCatalog=printCatalog;
 window.doLogin=doLogin;
 window.newOpp=newOpp; window.saveNewOpp=saveNewOpp; window.openOpp=openOpp; window.editOpp=editOpp;
 window.saveEditOpp=saveEditOpp; window.delOpp=delOpp; window.addActModal=addActModal; window.saveAct=saveAct;
