@@ -540,6 +540,10 @@ const SB_URL  = 'https://wcpkpwxhqdcdljfwzcmy.supabase.co';
 const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndjcGtwd3hocWRjZGxqZnd6Y215Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNDM4NDAsImV4cCI6MjA5NjYxOTg0MH0.MSTk46VAwdAsn5qNBdrHmGIiLYyN-rAyAZC72xZW3D4';
 const SB_REST = SB_URL + '/rest/v1';
 
+// URL del flujo de Power Automate que avisa a Facturación de una venta ganada (Teams + mail).
+// Pegá acá la "URL de POST HTTP" del trigger del flujo. Si queda vacía, no se envía aviso (sin romper nada).
+const COBRANZA_WEBHOOK_URL = 'https://defaultc408b6d8ae0b4d309056da52e18116.c4.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/c72f577668204811bd98c880cee735a8/triggers/manual/paths/invoke?api-version=1';
+
 // Cliente oficial de Supabase, solo para autenticación / sesión (login con Azure)
 const sbClient = window.supabase.createClient(SB_URL, SB_KEY);
 
@@ -663,6 +667,7 @@ function rowToClient(r){
   return {
     id:r.id, name:r.nombre||'', attn:r.atencion||'', email:r.email||'', phone:r.telefono||'', notes:r.notas||'',
     cuit:r.cuit||'', portal:r.portal||'', altaEstado:r.alta_estado||'sin_iniciar',
+    created: r.created_at ? Date.parse(r.created_at) : null,
     contactos: Array.isArray(r.contactos) ? r.contactos : []
   };
 }
@@ -1283,9 +1288,13 @@ VIEWS.clients = function(){
   });
   const altaCounts = { sin_iniciar:0, en_tramite:0, dado_alta:0 };
   DB.clients.forEach(c=>{ const a=c.altaEstado||'sin_iniciar'; if(altaCounts[a]!=null) altaCounts[a]++; });
+  // Nuevos clientes cargados hoy (según created_at)
+  const hoy0 = new Date(); hoy0.setHours(0,0,0,0);
+  const nuevosHoy = DB.clients.filter(c=> c.created && c.created >= hoy0.getTime()).length;
   const fa = clientAltaFiltro;
   C().innerHTML = `
     <div class="kpi-grid" style="margin-bottom:18px">
+      ${kpiCard('Nuevos clientes hoy', nuevosHoy, 0, 'Clientes cargados hoy en la app')}
       ${kpiCard('Sin iniciar', altaCounts.sin_iniciar, 0, 'Alta como proveedor pendiente', {onclick:"toggleClientAlta('sin_iniciar')", active:fa==='sin_iniciar'})}
       ${kpiCard('En trámite', altaCounts.en_tramite, 0, 'Alta en proceso', {onclick:"toggleClientAlta('en_tramite')", active:fa==='en_tramite'})}
       ${kpiCard('Dados de alta', altaCounts.dado_alta, 0, 'Habilitados como proveedor', {onclick:"toggleClientAlta('dado_alta')", active:fa==='dado_alta'})}
@@ -1783,7 +1792,31 @@ async function crearCobranzaDesdeOpp(oppId){
       notas: cot ? 'Generada al ganar la venta. Datos tomados de la cotización vinculada.' : 'Generada al ganar la venta. Completar monto y forma de pago.'
     }));
     toast('Venta enviada a Cobranzas');
+    // Aviso a Facturación (Teams + mail) vía Power Automate. No bloquea ni rompe si falla.
+    notificarCobranza({
+      ref: o.ref||'',
+      razon_social: cli ? cli.name : oppClientName(o),
+      cuit: cli ? (cli.cuit||'') : '',
+      monto_total: montoBase,
+      moneda,
+      forma_pago: (cot && cot.pago) ? cot.pago : '(a completar por Facturación)',
+      comercial: o.comercial||'',
+      unidad: o.unidad||''
+    });
   }catch(e){ /* si la tabla no existe aún, no rompe el flujo */ console.warn('Cobranza:', e.message); }
+}
+
+// Envía el aviso de nueva cobranza al flujo de Power Automate (Teams + mail).
+// Silencioso: si la URL no está configurada o falla la red, no interrumpe el flujo de la app.
+async function notificarCobranza(payload){
+  if(!COBRANZA_WEBHOOK_URL) return;
+  try{
+    await fetch(COBRANZA_WEBHOOK_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+  }catch(e){ console.warn('Aviso cobranza no enviado:', e.message); }
 }
 
 function addActModal(oppId){
