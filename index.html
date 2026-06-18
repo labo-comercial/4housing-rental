@@ -514,6 +514,8 @@ const STATES = [
 const stLabel = id => (STATES.find(s=>s.id===id)||STATES[0]).label;
 
 const COMERCIALES = ['Ignacio Sánchez Moser', 'Victoria López Aybar', 'Pablo Spinetto', 'Leandro Seoane', 'Héctor Bermúdez'];
+// Lista única de sectores, usada en todos los desplegables (prospección y clientes)
+const SECTORES = ['Oil & Gas','Minería','Agro','Construcción','Energía','Industria','Logística','Educación','Salud','Seguridad','Organismo Internacional'];
 // Estado de alta como proveedor en plataformas de contratación de cada cliente
 const ALTA_ESTADOS = ['sin_iniciar','en_tramite','dado_alta'];
 const ALTA_LBL = { sin_iniciar:'Sin iniciar', en_tramite:'En trámite', dado_alta:'Dado de alta' };
@@ -590,6 +592,9 @@ const SB = {
   addClient:   (c) => sbFetch('/clientes', {method:'POST', body: JSON.stringify(c)}).then(r=>r[0]),
   updateClient:(id,c) => sbFetch('/clientes?id=eq.'+id, {method:'PATCH', body: JSON.stringify(c)}).then(r=>r[0]),
   delClient:   (id) => sbFetch('/clientes?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
+  // Desvincula del cliente todos los mails entrantes que lo referencian (antes de borrarlo)
+  unlinkMailsCliente: (id) => sbFetch('/mails_entrantes?cliente_id=eq.'+id, {method:'PATCH', body: JSON.stringify({cliente_id:null}), prefer:'return=minimal'}),
+  unlinkActsCliente:  (id) => sbFetch('/actividades?cliente_id=eq.'+id, {method:'PATCH', body: JSON.stringify({cliente_id:null}), prefer:'return=minimal'}),
   // ---- Catálogo ----
   listCatalog: () => sbFetch('/catalogo?select=*&order=orden.asc'),
   addCatalog:  (c) => sbFetch('/catalogo', {method:'POST', body: JSON.stringify(c)}).then(r=>r[0]),
@@ -599,6 +604,7 @@ const SB = {
   listQuotes:  () => sbFetch('/cotizaciones?select=*&order=created_at.desc'),
   addQuote:    (q) => sbFetch('/cotizaciones', {method:'POST', body: JSON.stringify(q)}).then(r=>r[0]),
   updateQuote: (id,q) => sbFetch('/cotizaciones?id=eq.'+id, {method:'PATCH', body: JSON.stringify(q)}).then(r=>r[0]),
+  delQuote:    (id) => sbFetch('/cotizaciones?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
   // ---- Contador (número de oferta) ----
   // Incrementa atómicamente vía función RPC y devuelve el nuevo número
   nextSeq:     () => sbFetch('/rpc/next_seq', {method:'POST', body: JSON.stringify({})}),
@@ -675,14 +681,14 @@ function rowToQuote(r){
 function clientToRow(c){
   return {
     nombre:c.name, atencion:c.attn, email:c.email, telefono:c.phone, notas:c.notes,
-    cuit:c.cuit||null, portal:c.portal||null, alta_estado:c.altaEstado||'sin_iniciar',
+    cuit:c.cuit||null, portal:c.portal||null, alta_estado:c.altaEstado||'sin_iniciar', sector:c.sector||null,
     contactos: Array.isArray(c.contactos) ? c.contactos : []
   };
 }
 function rowToClient(r){
   return {
     id:r.id, name:r.nombre||'', attn:r.atencion||'', email:r.email||'', phone:r.telefono||'', notes:r.notas||'',
-    cuit:r.cuit||'', portal:r.portal||'', altaEstado:r.alta_estado||'sin_iniciar',
+    cuit:r.cuit||'', portal:r.portal||'', altaEstado:r.alta_estado||'sin_iniciar', sector:r.sector||'',
     created: r.created_at ? Date.parse(r.created_at) : null,
     contactos: Array.isArray(r.contactos) ? r.contactos : []
   };
@@ -1292,7 +1298,7 @@ VIEWS.clients = function(){
     const q=clientSearch.toLowerCase();
     list=list.filter(c=>{
       const cont=(c.contactos||[]).map(k=>`${k.nombre} ${k.cargo} ${k.email} ${k.telefono}`).join(' ');
-      return (`${c.name} ${c.attn||''} ${c.email||''} ${c.phone||''} ${c.cuit||''} ${c.portal||''} ${cont} ${c.notes||''}`)
+      return (`${c.name} ${c.attn||''} ${c.email||''} ${c.phone||''} ${c.cuit||''} ${c.portal||''} ${c.sector||''} ${cont} ${c.notes||''}`)
         .toLowerCase().includes(q);
     });
   }
@@ -1300,6 +1306,7 @@ VIEWS.clients = function(){
   const get = (c,col)=>{
     if(col==='name')  return (c.name||'').toLowerCase();
     if(col==='cuit')  return (c.cuit||'').toLowerCase();
+    if(col==='sector')return (c.sector||'').toLowerCase();
     if(col==='email') return (c.email||'').toLowerCase();
     if(col==='phone') return (c.phone||'').toLowerCase();
     if(col==='quotes')return DB.quotes.filter(q=>q.clientId===c.id).length;
@@ -1330,6 +1337,7 @@ VIEWS.clients = function(){
         <thead><tr>
           ${sortTh('Cliente','name','clientSort','VIEWS.clients')}
           ${sortTh('CUIT','cuit','clientSort','VIEWS.clients')}
+          ${sortTh('Sector','sector','clientSort','VIEWS.clients')}
           <th>Contactos</th>
           ${sortTh('Email','email','clientSort','VIEWS.clients')}
           ${sortTh('Teléfono','phone','clientSort','VIEWS.clients')}
@@ -1351,6 +1359,7 @@ VIEWS.clients = function(){
           return `<tr>
             <td><b>${esc(upperName(c.name))}</b></td>
             <td>${esc(c.cuit||'—')}</td>
+            <td style="font-size:12px;color:var(--muted)">${esc(c.sector||'—')}</td>
             <td>${contCell}</td>
             <td>${esc(c.email||'—')}</td><td>${esc(c.phone||'—')}</td>
             <td>${portalCell}</td>
@@ -1365,7 +1374,7 @@ VIEWS.clients = function(){
   s.oninput=()=>{ clientSearch=s.value; const p=s.selectionStart; VIEWS.clients(); const n=document.getElementById('cSearch'); n.focus(); n.setSelectionRange(p,p); };
 };
 function clientForm(id){
-  const c = id? DB.clients.find(x=>x.id===id) : {name:'',attn:'',email:'',phone:'',notes:'',cuit:'',portal:'',contactos:[]};
+  const c = id? DB.clients.find(x=>x.id===id) : {name:'',attn:'',email:'',phone:'',notes:'',cuit:'',portal:'',sector:'',contactos:[]};
   CLIENT_CONTACTS = (c.contactos && c.contactos.length)
     ? c.contactos.map(k=>({nombre:k.nombre||'',cargo:k.cargo||'',email:k.email||'',telefono:k.telefono||''}))
     : [];
@@ -1378,6 +1387,7 @@ function clientForm(id){
     <div class="field"><label>Email</label><input id="f_email" value="${esc(c.email)}"></div>
     <div class="field"><label>Portal / Plataforma de contrataciones (URL)</label><input id="f_portal" value="${esc(c.portal||'')}" placeholder="https://..."></div>
     <div class="field"><label>Estado de alta como proveedor</label><select id="f_alta">${ALTA_ESTADOS.map(a=>`<option value="${a}" ${a===(c.altaEstado||'sin_iniciar')?'selected':''}>${ALTA_LBL[a]}</option>`).join('')}</select></div>
+    <div class="field"><label>Sector</label><select id="f_sector"><option value="">— sin asignar —</option>${SECTORES.map(s=>`<option value="${esc(s)}" ${s===(c.sector||'')?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between">Contactos
         <button type="button" class="btn ghost sm" onclick="addClientContact()">${ICO.plus} Agregar contacto</button>
@@ -1385,7 +1395,7 @@ function clientForm(id){
       <div id="contactsList"></div>
     </div>
     <div class="field"><label>Notas</label><textarea id="f_notes">${esc(c.notes||'')}</textarea></div>
-  `, `${id?`<button class="btn danger" onclick="delClient('${id}')">Eliminar</button>`:''}
+  `, `${id?`<button class="btn danger" style="margin-right:auto" onclick="delClient('${id}')">Eliminar</button>`:''}
      <button class="btn ghost" onclick="closeModal()">Cancelar</button>
      <button class="btn" onclick="saveClient('${id||''}')">Guardar</button>`);
   renderClientContacts();
@@ -1424,7 +1434,7 @@ async function saveClient(id){
   const c={
     name:val('f_name').trim(), attn:val('f_attn')?val('f_attn').trim():'',
     email:val('f_email').trim(), phone:val('f_phone').trim(), notes:val('f_notes').trim(),
-    cuit:val('f_cuit').trim(), portal:val('f_portal').trim(), altaEstado:val('f_alta')||'sin_iniciar', contactos
+    cuit:val('f_cuit').trim(), portal:val('f_portal').trim(), altaEstado:val('f_alta')||'sin_iniciar', sector:val('f_sector')||'', contactos
   };
   if(!c.name){ toast('Ingresá el nombre del cliente'); return; }
   try{
@@ -1464,6 +1474,9 @@ async function delClient(id){
     for(const x of (DB.cobranzas||[]).filter(x=>x.clientId===id)){
       try{ await SB.updateCobranza(x.id, {cliente_id:null}); }catch(_){}
     }
+    // Mails entrantes y actividades referencian al cliente por FK: desvincular en bloque
+    try{ await SB.unlinkMailsCliente(id); }catch(_){}
+    try{ await SB.unlinkActsCliente(id); }catch(_){}
     await SB.delClient(id);
     await reloadDB();
     closeModal(); toast('Cliente eliminado'); VIEWS.clients();
@@ -2163,8 +2176,9 @@ function renderEmpresas(){
   let emps = [...DB.empProsp];
   const byEmp = {};
   DB.prospectos.forEach(p=>{ (byEmp[p.empresaId] = byEmp[p.empresaId] || []).push(p); });
-  // sectores disponibles
-  const sectores = [...new Set(DB.empProsp.map(e=>e.sector).filter(Boolean))].sort();
+  // sectores disponibles: lista unificada + cualquier valor heredado en datos
+  const sectoresData = [...new Set(DB.empProsp.map(e=>e.sector).filter(Boolean))];
+  const sectores = [...SECTORES, ...sectoresData.filter(s=>!SECTORES.includes(s))];
   if(prospView.sector) emps = emps.filter(e=> e.sector===prospView.sector);
   if(q) emps = emps.filter(e=> e.nombre.toLowerCase().includes(q));
   // filtro por estado: empresas que tengan al menos un prospecto en ese estado
@@ -2278,7 +2292,7 @@ function renderEmpresaDetalle(){
           <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
             <span class="help">Sector:</span>
             <select id="empSector" class="state-sel" style="max-width:none;margin-top:0">
-              ${['','Oil & Gas','Minería','Agro','Construcción','Energía','Industria','Otro'].map(s=>`<option value="${s}" ${s===(e.sector||'')?'selected':''}>${s||'— sin asignar —'}</option>`).join('')}
+              ${['', ...SECTORES].map(s=>`<option value="${s}" ${s===(e.sector||'')?'selected':''}>${s||'— sin asignar —'}</option>`).join('')}
             </select>
           </div>
         </div>
@@ -2850,10 +2864,45 @@ async function newVersion(id){
     renderEditor(false);
   }catch(e){ /* el toast de error ya se mostró */ }
 }
+
+// Elimina la cotización abierta. Borra solo la VERSIÓN que se está viendo.
+// Avisa y desvincula si está enlazada a una oportunidad o cobranza.
+async function delQuote(id){
+  const q = DB.quotes.find(x=>x.id===id);
+  if(!q){ toast('La cotización aún no está guardada.'); return; }
+  const totalVers = DB.quotes.filter(x=>x.seq===q.seq).length;
+  const verLabel = 'VER '+String(q.version||parseVer(q.ref)||1).padStart(2,'0');
+  const esUnica = totalVers<=1;
+
+  // Vínculos: oportunidades que apuntan a esta cotización
+  const oppsVinc = DB.opps.filter(o=>o.cotizacionId===id);
+
+  let aviso = esUnica
+    ? `¿Eliminar la cotización ${q.ref}? Es la única versión, así que se borra por completo.`
+    : `¿Eliminar la versión ${verLabel} de la oferta ${refBase(q)}? Las otras ${totalVers-1} versión(es) se conservan.`;
+  if(oppsVinc.length){
+    aviso += `\n\nEstá vinculada a ${oppsVinc.length} oportunidad(es): se desvinculan (no se borran).`;
+  }
+  if(!confirm(aviso)) return;
+  if(!confirm('Esta acción no se puede deshacer. ¿Confirmás?')) return;
+
+  try{
+    // Desvincular oportunidades que la referencian
+    for(const o of oppsVinc){
+      try{ await SB.updateOpp(o.id, {cotizacion_id:null}); }catch(_){}
+    }
+    await SB.delQuote(id);
+    await reloadDB();
+    toast(esUnica?'Cotización eliminada':'Versión eliminada');
+    go('quotes');
+  }catch(e){ toast('Error al eliminar: '+e.message); }
+}
+window.delQuote = delQuote;
 function renderEditor(isNew){
   setHeader(isNew?'Nueva cotización':'Editar cotización', CUR.ref,
     `<button class="btn ghost" onclick="go('quotes')">← Volver</button>
      ${(!isNew && CUR.id)?`<button class="btn ghost" onclick="newVersion('${CUR.id}')">${ICO.copy||ICO.plus} Nueva versión</button>`:''}
+     ${(!isNew && CUR.id)?`<button class="btn danger" onclick="delQuote('${CUR.id}')">Eliminar</button>`:''}
      <button class="btn ghost" onclick="printQuote()">${ICO.print} Imprimir / PDF</button>
      <button class="btn" onclick="saveQuote()">Guardar</button>`);
   const opts = DB.clients.map(c=>`<option value="${c.id}" ${c.id===CUR.clientId?'selected':''}>${esc(c.name)}</option>`).join('');
