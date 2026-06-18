@@ -542,7 +542,9 @@ const SB_REST = SB_URL + '/rest/v1';
 
 // URL del flujo de Power Automate que avisa a Facturación de una venta ganada (Teams + mail).
 // Pegá acá la "URL de POST HTTP" del trigger del flujo. Si queda vacía, no se envía aviso (sin romper nada).
-const COBRANZA_WEBHOOK_URL = 'https://defaultc408b6d8ae0b4d309056da52e18116.c4.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/c72f577668204811bd98c880cee735a8/triggers/manual/paths/invoke?api-version=1';
+// URL del Teams Workflow ("Enviar alertas de webhook a un canal") del canal Cobranzas.
+// URL firmada (incluye &sig=), acepta POST anónimo: no da 401 ni problemas de CORS.
+const COBRANZA_WEBHOOK_URL = 'https://defaultc408b6d8ae0b4d309056da52e18116.c4.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/24fd3ce35ac74903b076d91978e3f43f/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=YtVz7Ul9A1XqOe_zHDpIPFOcbvldHsn85BK9PgDjIw0';
 
 // Cliente oficial de Supabase, solo para autenticación / sesión (login con Azure)
 const sbClient = window.supabase.createClient(SB_URL, SB_KEY);
@@ -1806,17 +1808,37 @@ async function crearCobranzaDesdeOpp(oppId){
   }catch(e){ /* si la tabla no existe aún, no rompe el flujo */ console.warn('Cobranza:', e.message); }
 }
 
-// Envía el aviso de nueva cobranza al flujo de Power Automate (Teams + mail).
-// Silencioso: si la URL no está configurada o falla la red, no interrumpe el flujo de la app.
+// Envía el aviso de nueva cobranza a Facturación: Teams (webhook firmado, directo)
+// y mail (vía Edge Function notificar-cobranza). Silencioso: nunca interrumpe el flujo de la app.
 async function notificarCobranza(payload){
-  if(!COBRANZA_WEBHOOK_URL) return;
+  const sym = (payload.moneda==='ARS') ? '$' : 'USD';
+  // 1) Teams: POST directo a la URL firmada del Workflow. Mensaje en texto plano.
+  if(COBRANZA_WEBHOOK_URL){
+    const texto =
+      `💰 Nueva venta ganada — pasa a Cobranzas\n\n` +
+      `Ref: ${payload.ref||'—'}\n` +
+      `Cliente: ${payload.razon_social||'—'}${payload.cuit?` (CUIT ${payload.cuit})`:''}\n` +
+      `Monto: ${sym} ${Number(payload.monto_total||0).toLocaleString('es-AR')}\n` +
+      `Forma de pago: ${payload.forma_pago||'—'}\n` +
+      (payload.comercial?`Comercial: ${payload.comercial}\n`:'') +
+      (payload.unidad?`Unidad: ${payload.unidad}`:'');
+    try{
+      await fetch(COBRANZA_WEBHOOK_URL, {
+        method:'POST',
+        mode:'no-cors',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ text: texto })
+      });
+    }catch(e){ console.warn('Aviso Teams no enviado:', e.message); }
+  }
+  // 2) Mail: vía Edge Function (server-side, usa Microsoft Graph). No bloquea si falla.
   try{
-    await fetch(COBRANZA_WEBHOOK_URL, {
+    await fetch(SB_URL + '/functions/v1/notificar-cobranza', {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+SB_KEY},
       body: JSON.stringify(payload)
     });
-  }catch(e){ console.warn('Aviso cobranza no enviado:', e.message); }
+  }catch(e){ console.warn('Aviso mail no enviado:', e.message); }
 }
 
 function addActModal(oppId){
