@@ -64,6 +64,7 @@ a{color:var(--olive-deep);}
 /* ---------- CARDS / TABLES ---------- */
 .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:0;overflow:hidden;}
 .card + .card{margin-top:20px;}
+.card.cuenta-card + .card.cuenta-card{margin-top:0;}
 .card-h{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px;}
 .card-h h3{margin:0;font-size:15px;font-weight:700;letter-spacing:.01em;}
 .card-b{padding:18px 20px;}
@@ -2840,7 +2841,7 @@ VIEWS.cobranzas = function(){
         <div style="font-size:18px;font-weight:700;color:${col}">${sym(m)} ${fmt(val)}</div>
       </div>`;
     };
-    return `<div class="card"><div class="card-b">
+    return `<div class="card cuenta-card"><div class="card-b">
       <div style="font-size:13px;font-weight:700;color:#37432c;margin-bottom:12px">Estado de cuenta · ${m}</div>
       <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
         <div style="flex:0 0 auto">${donaSaldoSVG(sym(m), cuenta[m].porvencer, cuenta[m].vencido)}</div>
