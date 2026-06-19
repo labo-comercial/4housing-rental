@@ -2754,7 +2754,7 @@ function barraObjetivoSVG(sym, cobrado, objetivo){
 }
 
 VIEWS.cobranzas = function(){
-  setHeader('Cobranzas','Seguimiento de ventas ganadas y estado de cuenta');
+  setHeader('Cobranzas','Seguimiento de alquileres y ventas ganados, estados de cuenta e indicadores');
 
   let list = [...DB.cobranzas];
   if(cobSearch){
@@ -2840,7 +2840,7 @@ VIEWS.cobranzas = function(){
         <div style="font-size:18px;font-weight:700;color:${col}">${sym(m)} ${fmt(val)}</div>
       </div>`;
     };
-    return `<div class="card" style="height:100%"><div class="card-b">
+    return `<div class="card"><div class="card-b">
       <div style="font-size:13px;font-weight:700;color:#37432c;margin-bottom:12px">Estado de cuenta · ${m}</div>
       <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
         <div style="flex:0 0 auto">${donaSaldoSVG(sym(m), cuenta[m].porvencer, cuenta[m].vencido)}</div>
@@ -2876,7 +2876,7 @@ VIEWS.cobranzas = function(){
   const cuentaGridCols = nCuentas>=2 ? 'repeat(2, minmax(0,1fr))' : 'minmax(0, 480px)';
 
   C().innerHTML = `
-    <div style="display:grid;grid-template-columns:${cuentaGridCols};gap:16px;margin-bottom:16px;align-items:stretch">
+    <div style="display:grid;grid-template-columns:${cuentaGridCols};gap:16px;margin-bottom:16px;align-items:start">
       ${cuentaCards || '<div class="help">Todavía no hay ventas ganadas en cobranzas.</div>'}
     </div>
     ${DB.cobranzas.length ? `<div class="card" style="margin-bottom:16px"><div class="card-b">
