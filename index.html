@@ -373,11 +373,17 @@ textarea.inp{resize:vertical;min-height:60px;}
   /* Impresión del catálogo: oculta toda la app y muestra solo la capa */
   body.printing-catalog .app{display:none !important;}
   body.printing-catalog #catPrintLayer{display:block !important;}
+
+  /* Impresión del estado de cuenta de cobranzas */
+  body.printing-edc .app{display:none !important;}
+  body.printing-edc #edcPrintLayer{display:block !important;}
 }
-/* La capa de impresión del catálogo no se ve en pantalla */
+/* Las capas de impresión no se ven en pantalla */
 #catPrintLayer{display:none;}
+#edcPrintLayer{display:none;}
 @media print{
   #catPrintLayer .page{box-shadow:none;margin:0 !important;}
+  #edcPrintLayer .page{box-shadow:none;margin:0 !important;}
 }
 @media(max-width:1100px){
   .cotz-layout{grid-template-columns:1fr;}
@@ -537,7 +543,7 @@ const stLabel = id => (STATES.find(s=>s.id===id)||STATES[0]).label;
 
 const COMERCIALES = ['Ignacio Sánchez Moser', 'Victoria López Aybar', 'Pablo Spinetto', 'Leandro Seoane', 'Héctor Bermúdez'];
 // Equipo de Cobranzas (Gerencia de Administración y Finanzas). Editá esta lista con los nombres reales.
-const EQUIPO_COBRANZAS = ['Gerencia de Adm. y Finanzas'];
+const EQUIPO_COBRANZAS = ['Santiago Cittar', 'Alexis Carranza', 'Micaela Seoane'];
 // Lista única de sectores, usada en todos los desplegables (prospección y clientes)
 const SECTORES = ['Oil & Gas','Minería','Agro','Construcción','Energía','Industria','Logística','Educación','Salud','Seguridad','Organismo Internacional'];
 // Estado de alta como proveedor en plataformas de contratación de cada cliente
@@ -582,7 +588,7 @@ const COBRANZA_WEBHOOK_URL = 'https://defaultc408b6d8ae0b4d309056da52e18116.c4.e
 const sbClient = window.supabase.createClient(SB_URL, SB_KEY);
 
 // Cliente REST mínimo (sin librerías externas; usa fetch nativo)
-async function sbFetch(path, opts={}){
+async function sbFetch(path, opts={}, _retry=false){
   // Token de la sesión actual (si el usuario está logueado); si no, cae a la anon key
   let token = SB_KEY;
   try{
@@ -603,6 +609,12 @@ async function sbFetch(path, opts={}){
     }
   });
   if(!res.ok){
+    // Token vencido (401/403 con JWT expirado): refresca la sesión y reintenta UNA vez.
+    // Esto evita el clásico "falla al primer click, anda al segundo".
+    if((res.status===401 || res.status===403) && !_retry){
+      try{ await sbClient.auth.refreshSession(); }catch(_){ }
+      return sbFetch(path, opts, true);
+    }
     const txt = await res.text().catch(()=> '');
     throw new Error('Supabase '+res.status+': '+txt);
   }
@@ -2598,6 +2610,16 @@ let cobFiltroVenc   = '';  // '' | porcobrar | vencido | porvencer  (desde KPIs 
 const COB_UNIDAD_LBL = { rental:'Rental', ventas:'Ventas', ambas:'Ambas' };
 // Normaliza la unidad de negocio de una cobranza a 'rental' | 'ventas'
 function cobUnidad(c){ return (c.unidad==='ventas')?'ventas':(c.unidad==='ambas'?'ambas':'rental'); }
+// Normaliza la moneda a 'ARS' | 'USD'. Tolera minúsculas, espacios, símbolos ($/u$s).
+function cobMoneda(c){
+  const m = String((c&&c.moneda)||'').trim().toUpperCase();
+  if(m==='ARS' || m==='$' || m==='PESOS' || m==='AR$') return 'ARS';
+  return 'USD';
+}
+// Símbolo de moneda ya normalizada ('ARS'->'$', 'USD'->'USD')
+function monedaSym(m){ return m==='ARS' ? '$' : 'USD'; }
+// Símbolo a partir de una cobranza
+function cobSym(c){ return monedaSym(cobMoneda(c)); }
 
 // Suma de adicionales de una cobranza
 function cobAdicionales(cobId){ return DB.adicionales.filter(a=>a.cobranzaId===cobId).reduce((s,a)=>s+(a.monto||0),0); }
@@ -2663,7 +2685,7 @@ function objetivoCobroMes(){
   const fin = new Date(ini); fin.setMonth(fin.getMonth()+1); // primer día del mes siguiente
   const res = { USD:{base:0,obj:0,cobrado:0}, ARS:{base:0,obj:0,cobrado:0} };
   DB.cobranzas.forEach(c=>{
-    const m = (c.moneda==='ARS')?'ARS':'USD';
+    const m = cobMoneda(c);
     // facturas que vencen este mes (por fecha de emisión cargada)
     if(c.facturaFecha){
       const f = new Date(c.facturaFecha+'T00:00:00').getTime();
@@ -2672,7 +2694,7 @@ function objetivoCobroMes(){
   });
   // cobrado en el mes (pagos con fecha dentro del mes), por moneda
   DB.cobranzas.forEach(c=>{
-    const m = (c.moneda==='ARS')?'ARS':'USD';
+    const m = cobMoneda(c);
     DB.pagos.filter(p=>p.cobranzaId===c.id).forEach(p=>{
       if(p.fecha){ const pf=new Date(p.fecha+'T00:00:00').getTime(); if(pf>=ini.getTime() && pf<fin.getTime()) res[m].cobrado += (p.monto||0); }
     });
@@ -2740,7 +2762,7 @@ VIEWS.cobranzas = function(){
     list = list.filter(c => (`${c.ref} ${c.razonSocial} ${c.cuit} ${c.facturaNro}`).toLowerCase().includes(q));
   }
   if(cobFiltroEstado) list = list.filter(c => cobEstadoCalc(c)===cobFiltroEstado);
-  if(cobFiltroMoneda) list = list.filter(c => (c.moneda==='ARS'?'ARS':'USD')===cobFiltroMoneda);
+  if(cobFiltroMoneda) list = list.filter(c => cobMoneda(c)===cobFiltroMoneda);
   if(cobFiltroUnidad) list = list.filter(c => cobUnidad(c)===cobFiltroUnidad || cobUnidad(c)==='ambas');
   if(cobFiltroVenc)   list = list.filter(c => cobClaseVenc(c)===cobFiltroVenc);
   if(cobFiltroTramo)  list = list.filter(c => { const t=cobTramo(c); return t && t.key===cobFiltroTramo && cobSaldo(c)>0; });
@@ -2762,7 +2784,7 @@ VIEWS.cobranzas = function(){
   // Inicio de mes para "cobrado en el mes"
   const inicioMes = new Date(); inicioMes.setDate(1); inicioMes.setHours(0,0,0,0);
   DB.cobranzas.filter(enUnidad).forEach(c=>{
-    const m = (c.moneda==='ARS')?'ARS':'USD';
+    const m = cobMoneda(c);
     const saldo = cobSaldo(c);
     cuenta[m].total += cobTotal(c);
     cuenta[m].cobrado += cobPagado(c.id);
@@ -2778,7 +2800,7 @@ VIEWS.cobranzas = function(){
       if(p.fecha){ const pf=new Date(p.fecha+'T00:00:00').getTime(); if(pf>=inicioMes.getTime()) cuenta[m].cobradoMes += (p.monto||0); }
     });
   });
-  const sym = m => (m==='ARS')?'$':'USD';
+  const sym = m => monedaSym(m);
   const objCobro = objetivoCobroMes();
 
   // Ageing por tramos (solo cobranzas con saldo y con fecha de factura), por moneda activa
@@ -2786,7 +2808,7 @@ VIEWS.cobranzas = function(){
   const ageing = {}; AGEING_TRAMOS.forEach(t=> ageing[t.key]={monto:0, n:0});
   let sinFecha = {monto:0, n:0};
   DB.cobranzas.filter(enUnidad).forEach(c=>{
-    const m = (c.moneda==='ARS')?'ARS':'USD';
+    const m = cobMoneda(c);
     if(m!==monedaAgeing) return;
     const saldo = cobSaldo(c);
     if(saldo<=0) return;
@@ -2818,7 +2840,7 @@ VIEWS.cobranzas = function(){
         <div style="font-size:18px;font-weight:700;color:${col}">${sym(m)} ${fmt(val)}</div>
       </div>`;
     };
-    return `<div class="card"><div class="card-b">
+    return `<div class="card" style="height:100%"><div class="card-b">
       <div style="font-size:13px;font-weight:700;color:#37432c;margin-bottom:12px">Estado de cuenta · ${m}</div>
       <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
         <div style="flex:0 0 auto">${donaSaldoSVG(sym(m), cuenta[m].porvencer, cuenta[m].vencido)}</div>
@@ -2850,8 +2872,11 @@ VIEWS.cobranzas = function(){
     [['rental','Rental'],['ventas','Ventas']].map(([v,l])=>`<option value="${v}" ${v===cobFiltroUnidad?'selected':''}>${l}</option>`).join('');
   const hayFiltro = cobFiltroTramo||cobFiltroEstado||cobFiltroMoneda||cobFiltroUnidad||cobFiltroVenc;
 
+  const nCuentas = monedas.filter(m=>cuenta[m].n>0).length;
+  const cuentaGridCols = nCuentas>=2 ? 'repeat(2, minmax(0,1fr))' : 'minmax(0, 480px)';
+
   C().innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:16px;align-items:stretch">
+    <div style="display:grid;grid-template-columns:${cuentaGridCols};gap:16px;margin-bottom:16px;align-items:stretch">
       ${cuentaCards || '<div class="help">Todavía no hay ventas ganadas en cobranzas.</div>'}
     </div>
     ${DB.cobranzas.length ? `<div class="card" style="margin-bottom:16px"><div class="card-b">
@@ -2893,7 +2918,7 @@ function limpiarCobFiltros(){ cobFiltroTramo=''; cobFiltroEstado=''; cobFiltroMo
 window.toggleCobTramo = toggleCobTramo; window.toggleCobVenc = toggleCobVenc; window.limpiarCobFiltros = limpiarCobFiltros;
 
 function rowCobranza(c){
-  const sym = (c.moneda==='ARS')?'$':'USD';
+  const sym = cobSym(c);
   const saldo = cobSaldo(c);
   const est = cobEstadoCalc(c);
   const d = cobDiasVencido(c);
@@ -2917,7 +2942,7 @@ function rowCobranza(c){
 
 function openCobranza(id){
   const c = DB.cobranzas.find(x=>x.id===id); if(!c) return;
-  const sym = (c.moneda==='ARS')?'$':'USD';
+  const sym = cobSym(c);
   const pagos = DB.pagos.filter(p=>p.cobranzaId===id).sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||''));
   const adics = DB.adicionales.filter(a=>a.cobranzaId===id).sort((a,b)=> a.created-b.created);
   const gestiones = cobGestiones(id);
@@ -3007,13 +3032,14 @@ function openCobranza(id){
     <button class="btn ghost" onclick="editCobranza('${id}')">Editar datos</button>
     <button class="btn ghost" onclick="addGestionModal('${id}')">${ICO.plus} Gestión</button>
     <button class="btn ghost" onclick="addAdicionalModal('${id}')">${ICO.plus} Adicional</button>
+    <button class="btn ghost" onclick="printEstadoCuenta('${id}')">Imprimir estado de cuenta</button>
     <button class="btn" onclick="addPagoModal('${id}')">${ICO.plus} Registrar pago</button>`;
   openModal('Cobranza · '+(c.ref||''), body, foot);
 }
 
 function editCobranza(id){
   const c = DB.cobranzas.find(x=>x.id===id); if(!c) return;
-  const monedaOpts = [['USD','USD'],['ARS','ARS']].map(([v,l])=>`<option value="${v}" ${v===c.moneda?'selected':''}>${l}</option>`).join('');
+  const monedaOpts = [['USD','USD'],['ARS','ARS']].map(([v,l])=>`<option value="${v}" ${v===cobMoneda(c)?'selected':''}>${l}</option>`).join('');
   const unidadOpts = [['rental','Rental'],['ventas','Ventas'],['ambas','Ambas']].map(([v,l])=>`<option value="${v}" ${v===cobUnidad(c)?'selected':''}>${l}</option>`).join('');
   // copia de trabajo de las líneas de forma de pago
   FP_LINES = (c.formaPago && c.formaPago.length) ? c.formaPago.map(l=>({concepto:l.concepto||'', monto:l.monto!=null?l.monto:''})) : [];
@@ -3199,6 +3225,116 @@ async function delGestion(gestId, cobId){
   }catch(e){ toast('Error: '+e.message); }
 }
 window.addGestionModal=addGestionModal; window.saveGestion=saveGestion; window.delGestion=delGestion;
+
+// --- Estado de cuenta imprimible (por cobranza/proyecto, para enviar al cliente) ---
+function printEstadoCuenta(id){
+  const c = DB.cobranzas.find(x=>x.id===id); if(!c) return;
+  const sym = cobSym(c);
+  const pagos = DB.pagos.filter(p=>p.cobranzaId===id).sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||''));
+  const adics = DB.adicionales.filter(a=>a.cobranzaId===id).sort((a,b)=> a.created-b.created);
+  const total = cobTotal(c), pag = cobPagado(id), saldo = cobSaldo(c);
+  const est = cobEstadoCalc(c);
+  const hoy = new Date().toLocaleDateString('es-AR');
+
+  const fpRows = (c.formaPago && c.formaPago.length)
+    ? c.formaPago.map(l=>`<tr><td class="it-detail">${esc(l.concepto||'—')}</td><td class="it-r">${l.monto!=null?(sym+' '+fmt(l.monto)):'—'}</td></tr>`).join('')
+    : `<tr><td class="it-detail" colspan="2" style="color:#8a8578">Sin desglose de forma de pago.</td></tr>`;
+
+  const adicRows = adics.length
+    ? adics.map(a=>`<tr><td class="it-detail">${esc(a.descripcion||'—')}</td><td class="it-r">${sym} ${fmt(a.monto)}</td></tr>`).join('')
+    : '';
+
+  const pagoRows = pagos.length
+    ? pagos.map(p=>`<tr>
+        <td class="it-c">${p.fecha?new Date(p.fecha+'T00:00:00').toLocaleDateString('es-AR'):'—'}</td>
+        <td class="it-detail">${esc(p.medio||'—')}${p.notas?` · ${esc(p.notas)}`:''}</td>
+        <td class="it-r">${sym} ${fmt(p.monto)}</td></tr>`).join('')
+    : `<tr><td colspan="3" class="it-detail" style="color:#8a8578">Sin pagos registrados.</td></tr>`;
+
+  const facturaTxt = c.facturaNro
+    ? `${esc(c.facturaNro)}${c.facturaFecha?` · emitida ${new Date(c.facturaFecha+'T00:00:00').toLocaleDateString('es-AR')}`:''}`
+    : '—';
+
+  const html = `
+  <div class="page edc-page">
+    <div class="head">
+      <div class="head-logo"><div class="logo"><img src="${LOGO}" class="logo-img" alt="4housing"></div></div>
+      <div class="col-div head-doc">
+        <div class="doc-title">ESTADO DE CUENTA</div>
+        <div class="doc-rule"></div>
+        <div class="doc-ref">Ref. ${esc(c.ref||'—')}</div>
+      </div>
+      <div class="col-div head-date">${ICO.cal}<div class="meta-label">FECHA</div><div class="meta-val">${esc(hoy)}</div></div>
+      <div class="col-div head-tuv"><img src="${ISO_SEAL}" class="head-tuv-img" alt="ISO 9001 14001 45001 TÜV NORD"></div>
+    </div>
+
+    <div class="sec"><span class="num">01</span><span class="t">DATOS DEL CLIENTE</span><span class="ln"></span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;font-size:12.5px;margin:8px 2px 4px">
+      <div><b>Cliente:</b> ${esc(upperName(c.razonSocial)||'—')}</div>
+      <div><b>CUIT:</b> ${esc(c.cuit||'—')}</div>
+      <div><b>Unidad:</b> ${COB_UNIDAD_LBL[cobUnidad(c)]||cobUnidad(c)}</div>
+      <div><b>Moneda:</b> ${cobMoneda(c)}</div>
+      <div style="grid-column:1/3"><b>Factura (ERP):</b> ${facturaTxt}</div>
+    </div>
+
+    <div class="sec"><span class="num">02</span><span class="t">DETALLE</span><span class="ln"></span></div>
+    <table class="items no-plazo">
+      <thead><tr><th>CONCEPTO</th><th class="r">IMPORTE</th></tr></thead>
+      <tbody>
+        <tr><td class="it-detail"><b>Monto base de la operación</b></td><td class="it-r">${sym} ${fmt(c.montoBase)}</td></tr>
+        ${adicRows}
+        <tr style="border-top:2px solid #37432c"><td class="it-detail"><b>TOTAL A COBRAR</b></td><td class="it-r"><b>${sym} ${fmt(total)}</b></td></tr>
+      </tbody>
+    </table>
+
+    <div class="sec"><span class="num">03</span><span class="t">FORMA DE PAGO ACORDADA</span><span class="ln"></span></div>
+    <table class="items no-plazo">
+      <thead><tr><th>CONCEPTO</th><th class="r">IMPORTE</th></tr></thead>
+      <tbody>${fpRows}</tbody>
+    </table>
+
+    <div class="sec"><span class="num">04</span><span class="t">PAGOS RECIBIDOS</span><span class="ln"></span></div>
+    <table class="items">
+      <thead><tr><th style="width:120px">FECHA</th><th>MEDIO / DETALLE</th><th class="r">IMPORTE</th></tr></thead>
+      <tbody>${pagoRows}</tbody>
+    </table>
+
+    <div style="margin-top:18px;display:flex;justify-content:flex-end">
+      <table style="font-size:13px;border-collapse:collapse;min-width:280px">
+        <tr><td style="padding:4px 14px;color:#5f7a4e">Total a cobrar</td><td style="padding:4px 0;text-align:right;font-weight:600">${sym} ${fmt(total)}</td></tr>
+        <tr><td style="padding:4px 14px;color:#4f8a53">Cobrado</td><td style="padding:4px 0;text-align:right;font-weight:600;color:#4f8a53">${sym} ${fmt(pag)}</td></tr>
+        <tr style="border-top:2px solid #37432c"><td style="padding:6px 14px;font-weight:700">SALDO PENDIENTE</td><td style="padding:6px 0;text-align:right;font-weight:700;color:${saldo>0?'#b0584f':'#4f8a53'}">${sym} ${fmt(saldo)}</td></tr>
+      </table>
+    </div>
+
+    <div class="note">Estado de cuenta emitido el ${esc(hoy)}. Estado: ${COB_ESTADO_LBL[est]}. Los importes están expresados en ${cobMoneda(c)==='ARS'?'Pesos Argentinos (ARS)':'Dólares (USD)'}. Documento de gestión interna; la factura electrónica del ERP es el comprobante fiscal válido.</div>
+
+    <div class="foot">
+      <div class="foot-l"><img src="${LOGO}" class="foot-logo" alt="4housing"></div>
+      <div class="foot-c">
+        <div class="fi">${ICO.mail}<span>${esc(SETTINGS.email)}</span></div>
+        <div class="fi">${ICO.web}<span>${esc(SETTINGS.web)}</span></div>
+        <div class="fi">${ICO.phone}<span>${esc(SETTINGS.tel)}</span></div>
+      </div>
+    </div>
+  </div>`;
+
+  let layer = document.getElementById('edcPrintLayer');
+  if(!layer){ layer=document.createElement('div'); layer.id='edcPrintLayer'; document.body.appendChild(layer); }
+  layer.innerHTML = html;
+  document.body.classList.add('printing-edc');
+  const prevTitle = document.title;
+  document.title = `EstadoDeCuenta-${(c.ref||'').replace(/[^\w-]/g,'')||'4housing'}-${todayISO()}`;
+  setTimeout(()=>{
+    window.print();
+    setTimeout(()=>{
+      document.body.classList.remove('printing-edc');
+      layer.innerHTML='';
+      document.title = prevTitle;
+    }, 400);
+  }, 60);
+}
+window.printEstadoCuenta = printEstadoCuenta;
 
 /* ================= QUOTE EDITOR ================= */
 let CUR=null; // working quote
