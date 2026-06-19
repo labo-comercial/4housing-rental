@@ -1399,7 +1399,7 @@ VIEWS.clients = function(){
     </div>
     <div class="toolbar"><div class="search">${ICO.search}<input id="cSearch" placeholder="Buscar por empresa, CUIT, contacto, email…" value="${esc(clientSearch)}"></div>${fa?`<button class="btn ghost sm" onclick="toggleClientAlta('${fa}')">Quitar filtro: ${ALTA_LBL[fa]}</button>`:''}</div>
     <div class="card">
-      ${list.length? `<table class="grid">
+      ${list.length? `<div style="overflow-x:auto"><table class="grid" style="min-width:1080px">
         <thead><tr>
           ${sortTh('Cliente','name','clientSort','VIEWS.clients')}
           ${sortTh('CUIT','cuit','clientSort','VIEWS.clients')}
@@ -1432,7 +1432,7 @@ VIEWS.clients = function(){
             <td>${altaCell}</td>
             <td class="c">${n}</td>
             <td class="r" style="white-space:nowrap"><div style="display:inline-flex;gap:6px;justify-content:flex-end"><button class="btn ghost sm" onclick="clientForm('${c.id}')">Editar</button><button class="btn sm" onclick="newQuote('${c.id}')">Cotizar</button></div></td>
-          </tr>`;}).join('')}</tbody></table>`
+          </tr>`;}).join('')}</tbody></table></div>`
         : emptyState('Sin clientes aún','Agregá tu primer contacto.')}
     </div>`;
   const s=document.getElementById('cSearch');
@@ -3049,7 +3049,7 @@ function editCobranza(id){
       <div class="fld"><label>CUIT</label><input id="cobCuit" class="inp" value="${esc(c.cuit||'')}"></div>
       <div class="fld"><label>Unidad de negocio</label><select id="cobUnidadEd" class="inp">${unidadOpts}</select></div>
       <div class="fld"><label>Monto base</label><input id="cobMonto" class="inp" value="${esc(String(c.montoBase||0))}"></div>
-      <div class="fld"><label>Moneda</label><select id="cobMoneda" class="inp">${monedaOpts}</select></div>
+      <div class="fld"><label>Moneda</label><select id="cobMonedaEd" class="inp">${monedaOpts}</select></div>
       <div class="fld"><label>Nº de factura <span class="help" style="font-weight:400">(del ERP)</span></label><input id="cobFactNro" class="inp" value="${esc(c.facturaNro||'')}" placeholder="A-0001-00012345"></div>
       <div class="fld"><label>Fecha de emisión <span class="help" style="font-weight:400">(para ageing)</span></label><input id="cobFactFecha" class="inp" type="date" value="${esc(c.facturaFecha||'')}"></div>
     </div>
@@ -3090,7 +3090,7 @@ async function saveCobranza(id){
       razon_social: document.getElementById('cobRazon').value.trim()||null,
       cuit: document.getElementById('cobCuit').value.trim()||null,
       monto_total: num(document.getElementById('cobMonto').value),
-      moneda: document.getElementById('cobMoneda').value,
+      moneda: document.getElementById('cobMonedaEd').value,
       unidad_negocio: document.getElementById('cobUnidadEd').value,
       forma_pago: fp,
       factura_nro: document.getElementById('cobFactNro').value.trim()||null,
