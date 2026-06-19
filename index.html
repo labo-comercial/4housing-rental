@@ -987,6 +987,11 @@ VIEWS.dashboard = function(){
   setHeader('Rental','Indicadores comerciales');
   const q = DB.quotes;
   const cm = curMonthKey(), pm = prevMonthKey();
+  const hoy0 = startOfToday();
+
+  // nuevos de hoy
+  const cotsHoy = q.filter(x=> x.created && x.created>=hoy0);
+  const oppsRentalHoy = DB.opps.filter(o=> (o.unidad==='rental'||o.unidad==='ambas') && o.created && o.created>=hoy0).length;
 
   // conjuntos base
   const vigentes = q.filter(x=>!['ganada','perdida'].includes(x.state));
@@ -997,8 +1002,12 @@ VIEWS.dashboard = function(){
   const convCM = cotsCM.length ? (ganadasCM.length/cotsCM.length*100) : 0;
   const convPM = cotsPM.length ? (ganadasPM.length/cotsPM.length*100) : 0;
 
-  // definición de las 8 cajas (objetivo, valor, formato, filtro)
+  // definición de las cajas (objetivo, valor, formato, filtro)
   const cards = [
+    { key:'cotsHoy', label:'Cotizaciones nuevas hoy', value:cotsHoy.length, target:null,
+      fn:x=>x.created && x.created>=hoy0, sub:'Cargadas hoy' },
+    { key:'oppsHoy', label:'Oportunidades nuevas hoy', value:oppsRentalHoy, target:null,
+      info:true, sub:'Oportunidades de rental cargadas hoy' },
     { key:'totales', label:'Cotizaciones totales', value:q.length, target:null,
       fn:()=>true, sub:'Total histórico' },
     { key:'vigentes', label:'Cotizaciones vigentes', value:vigentes.length, target:30,
@@ -1025,6 +1034,15 @@ VIEWS.dashboard = function(){
     const valTxt = c.pct ? c.value.toFixed(1)+'%' : c.value;
     const tgtTxt = hasTarget ? (c.pct ? c.target+'%' : c.target) : '';
     const active = dashFilter && dashFilter.key===c.key ? 'kpi-active' : '';
+    if(c.info){
+      return `
+    <div class="kpi" style="cursor:default">
+      <div class="kpi-label">${c.label}</div>
+      <div class="kpi-value" style="color:${color}">${valTxt}</div>
+      <div class="kpi-bar kpi-bar-none"></div>
+      <div class="kpi-sub">${c.sub}</div>
+    </div>`;
+    }
     return `
     <div class="kpi ${active}" onclick="dashSelect('${c.key}')">
       <div class="kpi-label">${c.label}</div>
@@ -1041,8 +1059,12 @@ VIEWS.dashboard = function(){
   let listTitle = 'Cotizaciones recientes';
   if(dashFilter){
     const c = cards.find(x=>x.key===dashFilter.key);
-    listed = listed.filter(c.fn);
-    listTitle = c.label + ' (' + listed.length + ')';
+    if(c && typeof c.fn==='function'){
+      listed = listed.filter(c.fn);
+      listTitle = c.label + ' (' + listed.length + ')';
+    } else {
+      listed = listed.slice(0,8);
+    }
   } else {
     listed = listed.slice(0,8);
   }
@@ -2162,6 +2184,8 @@ function startOfMonthTs(){ const d=new Date(); return new Date(d.getFullYear(),d
 function ventasKPIs(){
   const v = DB.opps.filter(o=> o.unidad==='ventas' || o.unidad==='ambas');
   const tm = startOfMonthTs();
+  const t0 = startOfToday();
+  const nuevasHoy = v.filter(o=> o.created && o.created>=t0).length;
   const enProceso = v.filter(o=> o.state==='nuevo' || o.state==='borrador').length;
   const cotizadas = v.filter(o=> o.state==='enviada').length;           // a la espera de respuesta
   const ganadasMes = v.filter(o=> o.state==='ganada' && (o.updated||o.created)>=tm).length;
@@ -2171,7 +2195,7 @@ function ventasKPIs(){
                     .reduce((s,o)=> s + (o.valor||0), 0);
   const cerradas = v.filter(o=> o.state==='ganada' || o.state==='perdida').length;
   const conv = cerradas>0 ? Math.round(100*v.filter(o=>o.state==='ganada').length/cerradas) : 0;
-  return { total:v.length, enProceso, cotizadas, cotizadasMes, ganadasMes, pipeline, conv };
+  return { total:v.length, nuevasHoy, enProceso, cotizadas, cotizadasMes, ganadasMes, pipeline, conv };
 }
 
 let ventasPanelFiltro = ''; // '' | 'activas' | 'enviada' | 'ganada'
@@ -2190,10 +2214,12 @@ VIEWS.dashboard_ventas = function(){
   if(f==='activas')  list = list.filter(o=> o.state==='nuevo'||o.state==='borrador');
   else if(f==='enviada') list = list.filter(o=> o.state==='enviada');
   else if(f==='ganada')  list = list.filter(o=> o.state==='ganada');
+  else if(f==='hoy')     list = list.filter(o=> o.created && o.created>=startOfToday());
   list = list.sort((a,b)=>b.created-a.created);
 
   C().innerHTML = `
     <div class="kpi-grid" style="margin-bottom:22px">
+      ${kpiCard('Oportunidades nuevas hoy', k.nuevasHoy, 0, 'Cargadas hoy', {onclick:"toggleVentasFiltro('hoy')", active:f==='hoy'})}
       ${kpiCard('Oportunidades activas', k.enProceso, 5, 'Nuevas y en proceso · obj. 5', {onclick:"toggleVentasFiltro('activas')", active:f==='activas'})}
       ${kpiCard('Cotizadas a la espera', k.cotizadas, 20, 'Esperando respuesta · obj. 20', {onclick:"toggleVentasFiltro('enviada')", active:f==='enviada'})}
       ${kpiCard('Cotizadas (mes)', k.cotizadasMes, 20, 'Generadas este mes · obj. 20')}
