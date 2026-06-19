@@ -124,6 +124,20 @@ tr.ver-child.hide{display:none;}
 .cob-pendiente{background:#f1efe9;color:#9a9080;}
 .cob-parcial{background:#fbf1e0;color:#b3853a;}
 .cob-cobrado{background:#e6f1e3;color:#4f8a53;}
+.sem{display:inline-block;width:11px;height:11px;border-radius:50%;}
+.sem-verde{background:#4f8a53;}
+.sem-amarillo{background:#e0a93a;}
+.sem-rojo{background:#b0584f;}
+.sem-sinfecha{background:#d8d4c8;}
+.age-chart{display:flex;flex-direction:column;gap:8px;}
+.age-row{display:grid;grid-template-columns:60px 1fr auto;align-items:center;gap:12px;cursor:pointer;padding:4px 6px;border-radius:7px;transition:background .12s;}
+.age-row:hover{background:#f1efe9;}
+.age-row.on{background:#eaf0e4;outline:1px solid #9db98b;}
+.age-lbl{font-size:12.5px;font-weight:700;color:#37432c;}
+.age-track{background:#eef0ea;border-radius:6px;height:16px;overflow:hidden;}
+.age-fill{height:100%;border-radius:6px;min-width:2px;}
+.age-val{font-size:12.5px;font-weight:700;color:#37432c;white-space:nowrap;}
+.age-n{font-weight:400;color:var(--muted);margin-left:4px;}
 .qc-chart{display:flex;flex-direction:column;gap:9px;}
 .qc-row{display:grid;grid-template-columns:130px 1fr 34px;align-items:center;gap:10px;}
 .qc-name{font-size:12.5px;color:#37432c;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -752,6 +766,7 @@ function rowToCobranza(r){
     razonSocial:r.razon_social||'', cuit:r.cuit||'',
     montoBase:r.monto_total!=null?Number(r.monto_total):0, moneda:r.moneda||'USD',
     formaPago:parseFormaPago(r.forma_pago), estado:r.estado||'pendiente', notas:r.notas||'',
+    facturaNro:r.factura_nro||'', facturaFecha:r.factura_fecha||'',
     created:r.created_at?Date.parse(r.created_at):Date.now()
   };
 }
@@ -764,7 +779,8 @@ function cobranzaToRow(c){
     razon_social:c.razonSocial||null, cuit:c.cuit||null,
     monto_total:(c.montoBase===''||c.montoBase==null)?0:num(c.montoBase),
     moneda:c.moneda||'USD', forma_pago:fp,
-    estado:c.estado||'pendiente', notas:c.notas||null
+    estado:c.estado||'pendiente', notas:c.notas||null,
+    factura_nro:c.facturaNro||null, factura_fecha:c.facturaFecha||null
   };
 }
 function rowToAdicional(r){
@@ -2511,6 +2527,8 @@ const COB_ESTADOS = ['pendiente','parcial','cobrado'];
 const COB_ESTADO_LBL = { pendiente:'Pendiente', parcial:'Parcial', cobrado:'Cobrado' };
 let cobFiltroEstado = '';
 let cobSearch = '';
+let cobFiltroTramo = '';   // '' | aldia | t1_30 | t31_60 | t61_90 | t90mas
+let cobFiltroMoneda = '';  // '' | USD | ARS
 
 // Suma de adicionales de una cobranza
 function cobAdicionales(cobId){ return DB.adicionales.filter(a=>a.cobranzaId===cobId).reduce((s,a)=>s+(a.monto||0),0); }
@@ -2529,78 +2547,181 @@ function cobEstadoCalc(c){
   return 'cobrado';
 }
 
+// --- Ageing: días transcurridos desde la fecha de emisión de la factura ---
+// Nota: la fecha de factura es un dato de gestión que se copia del ERP (fuente fiscal).
+const AGEING_TRAMOS = [
+  {key:'aldia',   lbl:'Al día',    min:-99999, max:0},
+  {key:'t1_30',   lbl:'1-30',      min:1,      max:30},
+  {key:'t31_60',  lbl:'31-60',     min:31,     max:60},
+  {key:'t61_90',  lbl:'61-90',     min:61,     max:90},
+  {key:'t90mas',  lbl:'+90',       min:91,     max:99999},
+];
+// Días vencidos desde la emisión de factura. null si no hay fecha cargada.
+function cobDiasVencido(c){
+  if(!c.facturaFecha) return null;
+  const emis = new Date(c.facturaFecha+'T00:00:00').getTime();
+  if(isNaN(emis)) return null;
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  return Math.floor((hoy.getTime()-emis)/86400000);
+}
+// Tramo de ageing al que pertenece (solo si tiene saldo pendiente y fecha de factura)
+function cobTramo(c){
+  const d = cobDiasVencido(c);
+  if(d==null) return null;
+  return AGEING_TRAMOS.find(t=> d>=t.min && d<=t.max) || null;
+}
+// Color de semáforo según ageing
+function cobSemaforo(c){
+  const d = cobDiasVencido(c);
+  if(d==null) return 'sinfecha';
+  if(d<=0)  return 'verde';
+  if(d<=30) return 'amarillo';
+  return 'rojo';
+}
+
 VIEWS.cobranzas = function(){
   setHeader('Cobranzas','Seguimiento de ventas ganadas y estado de cuenta');
 
   let list = [...DB.cobranzas];
   if(cobSearch){
     const q = cobSearch.toLowerCase();
-    list = list.filter(c => (`${c.ref} ${c.razonSocial} ${c.cuit} ${c.formaPago}`).toLowerCase().includes(q));
+    list = list.filter(c => (`${c.ref} ${c.razonSocial} ${c.cuit} ${c.facturaNro}`).toLowerCase().includes(q));
   }
   if(cobFiltroEstado) list = list.filter(c => cobEstadoCalc(c)===cobFiltroEstado);
-  list.sort((a,b)=> b.created - a.created);
+  if(cobFiltroMoneda) list = list.filter(c => (c.moneda==='ARS'?'ARS':'USD')===cobFiltroMoneda);
+  if(cobFiltroTramo)  list = list.filter(c => { const t=cobTramo(c); return t && t.key===cobFiltroTramo && cobSaldo(c)>0; });
+  // Orden: más vencido primero (prioridad de gestión), las sin fecha al final
+  list.sort((a,b)=>{
+    const da=cobDiasVencido(a), db=cobDiasVencido(b);
+    if(da==null && db==null) return b.created-a.created;
+    if(da==null) return 1;
+    if(db==null) return -1;
+    return db-da;
+  });
 
-  // Estado de cuenta separado por moneda
+  // Estado de cuenta + KPIs de cabecera, separados por moneda
   const monedas = ['USD','ARS'];
   const cuenta = {};
-  monedas.forEach(m => cuenta[m] = { total:0, cobrado:0, pendiente:0, n:0 });
+  monedas.forEach(m => cuenta[m] = { total:0, cobrado:0, pendiente:0, vencido:0, porvencer:0, cobradoMes:0, n:0 });
+  // Inicio de mes para "cobrado en el mes"
+  const inicioMes = new Date(); inicioMes.setDate(1); inicioMes.setHours(0,0,0,0);
   DB.cobranzas.forEach(c=>{
     const m = (c.moneda==='ARS')?'ARS':'USD';
+    const saldo = cobSaldo(c);
     cuenta[m].total += cobTotal(c);
     cuenta[m].cobrado += cobPagado(c.id);
-    cuenta[m].pendiente += cobSaldo(c);
+    cuenta[m].pendiente += saldo;
     cuenta[m].n++;
+    if(saldo>0){
+      const d = cobDiasVencido(c);
+      if(d!=null && d>0) cuenta[m].vencido += saldo;
+      else cuenta[m].porvencer += saldo;
+    }
+    // cobrado en el mes: pagos del mes en curso
+    DB.pagos.filter(p=>p.cobranzaId===c.id).forEach(p=>{
+      if(p.fecha){ const pf=new Date(p.fecha+'T00:00:00').getTime(); if(pf>=inicioMes.getTime()) cuenta[m].cobradoMes += (p.monto||0); }
+    });
   });
   const sym = m => (m==='ARS')?'$':'USD';
+
+  // Ageing por tramos (solo cobranzas con saldo y con fecha de factura), por moneda activa
+  const monedaAgeing = cobFiltroMoneda || (cuenta.USD.n>=cuenta.ARS.n?'USD':'ARS');
+  const ageing = {}; AGEING_TRAMOS.forEach(t=> ageing[t.key]={monto:0, n:0});
+  let sinFecha = {monto:0, n:0};
+  DB.cobranzas.forEach(c=>{
+    const m = (c.moneda==='ARS')?'ARS':'USD';
+    if(m!==monedaAgeing) return;
+    const saldo = cobSaldo(c);
+    if(saldo<=0) return;
+    const t = cobTramo(c);
+    if(!t){ sinFecha.monto+=saldo; sinFecha.n++; return; }
+    ageing[t.key].monto += saldo; ageing[t.key].n++;
+  });
+  const maxAgeing = Math.max(1, ...AGEING_TRAMOS.map(t=>ageing[t.key].monto));
+  const ageingBars = AGEING_TRAMOS.map(t=>{
+    const a = ageing[t.key];
+    const pct = Math.round(100*a.monto/maxAgeing);
+    const activo = cobFiltroTramo===t.key;
+    const col = t.key==='aldia'?'#4f8a53':(t.key==='t1_30'?'#b3853a':(t.key==='t31_60'?'#c2843a':'#b0584f'));
+    return `<div class="age-row ${activo?'on':''}" onclick="toggleCobTramo('${t.key}')" title="Filtrar ${t.lbl}">
+      <div class="age-lbl">${t.lbl}</div>
+      <div class="age-track"><div class="age-fill" style="width:${pct}%;background:${col}"></div></div>
+      <div class="age-val">${sym(monedaAgeing)} ${fmt(a.monto)}<span class="age-n">(${a.n})</span></div>
+    </div>`;
+  }).join('');
+
   const cuentaCards = monedas.filter(m=>cuenta[m].n>0).map(m=>`
     <div class="card"><div class="card-b">
       <div style="font-size:13px;font-weight:700;color:#37432c;margin-bottom:10px">Estado de cuenta · ${m}</div>
-      <div style="display:flex;gap:20px;flex-wrap:wrap">
-        <div><div class="help">Facturado</div><div style="font-size:19px;font-weight:700;color:#37432c">${sym(m)} ${fmt(cuenta[m].total)}</div></div>
-        <div><div class="help">Cobrado</div><div style="font-size:19px;font-weight:700;color:#4f8a53">${sym(m)} ${fmt(cuenta[m].cobrado)}</div></div>
-        <div><div class="help">Pendiente</div><div style="font-size:19px;font-weight:700;color:#b3853a">${sym(m)} ${fmt(cuenta[m].pendiente)}</div></div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap">
+        <div><div class="help">Por cobrar</div><div style="font-size:19px;font-weight:700;color:#b3853a">${sym(m)} ${fmt(cuenta[m].pendiente)}</div></div>
+        <div><div class="help">Vencido</div><div style="font-size:19px;font-weight:700;color:#b0584f">${sym(m)} ${fmt(cuenta[m].vencido)}</div></div>
+        <div><div class="help">Por vencer</div><div style="font-size:19px;font-weight:700;color:#4f8a53">${sym(m)} ${fmt(cuenta[m].porvencer)}</div></div>
+        <div><div class="help">Cobrado en el mes</div><div style="font-size:19px;font-weight:700;color:#5f7a4e">${sym(m)} ${fmt(cuenta[m].cobradoMes)}</div></div>
       </div>
     </div></div>`).join('');
 
   const estadoFiltroOpts = `<option value="">Todos los estados</option>`+
     COB_ESTADOS.map(s=>`<option value="${s}" ${s===cobFiltroEstado?'selected':''}>${COB_ESTADO_LBL[s]}</option>`).join('');
+  const monedaFiltroOpts = `<option value="">Todas las monedas</option>`+
+    ['USD','ARS'].map(m=>`<option value="${m}" ${m===cobFiltroMoneda?'selected':''}>${m}</option>`).join('');
 
   C().innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:18px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px">
       ${cuentaCards || '<div class="help">Todavía no hay ventas ganadas en cobranzas.</div>'}
     </div>
+    ${DB.cobranzas.length ? `<div class="card" style="margin-bottom:16px"><div class="card-b">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-size:13px;font-weight:700;color:#37432c">Ageing de saldos · ${monedaAgeing} <span class="help" style="font-weight:400">· días desde emisión de factura · tocá para filtrar</span></div>
+        ${cobFiltroTramo?`<button class="btn ghost sm" onclick="toggleCobTramo('${cobFiltroTramo}')">Quitar filtro</button>`:''}
+      </div>
+      <div class="age-chart">${ageingBars}</div>
+      ${sinFecha.n?`<div class="help" style="margin-top:10px">${sinFecha.n} cobranza(s) con saldo sin fecha de factura cargada (${sym(monedaAgeing)} ${fmt(sinFecha.monto)}) — no entran al ageing.</div>`:''}
+    </div></div>` : ''}
     <div class="opp-filters">
-      <input id="cobSearch" class="inp" style="max-width:280px" placeholder="Buscar por ref, cliente, CUIT…" value="${esc(cobSearch)}">
+      <input id="cobSearch" class="inp" style="max-width:240px" placeholder="Buscar ref, cliente, CUIT, factura…" value="${esc(cobSearch)}">
       <select id="cobEstado">${estadoFiltroOpts}</select>
+      <select id="cobMoneda">${monedaFiltroOpts}</select>
+      ${(cobFiltroTramo||cobFiltroEstado||cobFiltroMoneda)?`<button class="btn ghost sm" onclick="limpiarCobFiltros()">Limpiar filtros</button>`:''}
       <span class="help" style="margin-left:auto">${list.length} ${list.length===1?'cobranza':'cobranzas'}</span>
     </div>
     <div class="card"><div class="card-b" style="padding:0">
       ${list.length ? `<table class="grid">
         <thead><tr>
-          <th>Ref.</th><th>Cliente / Razón social</th><th>CUIT</th>
-          <th class="r">Total</th><th class="r">Cobrado</th><th class="r">Saldo</th><th>Estado</th>
+          <th></th><th>Ref.</th><th>Cliente</th><th>Factura</th><th class="c">Días</th>
+          <th class="r">Total</th><th class="r">Saldo</th><th>Estado</th>
         </tr></thead>
         <tbody>${list.map(rowCobranza).join('')}</tbody></table>`
-      : `<div class="empty" style="padding:40px">No hay cobranzas${cobFiltroEstado||cobSearch?' con este filtro':''}. Las ventas llegan automáticamente al ganar una oportunidad.</div>`}
+      : `<div class="empty" style="padding:40px">No hay cobranzas con este filtro. Las ventas llegan automáticamente al ganar una venta.</div>`}
     </div></div>`;
 
   const s=document.getElementById('cobSearch');
   s.oninput=()=>{ cobSearch=s.value; const p=s.selectionStart; VIEWS.cobranzas(); const n=document.getElementById('cobSearch'); n.focus(); n.setSelectionRange(p,p); };
   document.getElementById('cobEstado').onchange=ev=>{ cobFiltroEstado=ev.target.value; VIEWS.cobranzas(); };
+  document.getElementById('cobMoneda').onchange=ev=>{ cobFiltroMoneda=ev.target.value; VIEWS.cobranzas(); };
   C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openCobranza(tr.dataset.id));
 };
+function toggleCobTramo(k){ cobFiltroTramo = (cobFiltroTramo===k)?'':k; VIEWS.cobranzas(); }
+function limpiarCobFiltros(){ cobFiltroTramo=''; cobFiltroEstado=''; cobFiltroMoneda=''; VIEWS.cobranzas(); }
+window.toggleCobTramo = toggleCobTramo; window.limpiarCobFiltros = limpiarCobFiltros;
 
 function rowCobranza(c){
   const sym = (c.moneda==='ARS')?'$':'USD';
-  const pag = cobPagado(c.id);
   const saldo = cobSaldo(c);
   const est = cobEstadoCalc(c);
+  const d = cobDiasVencido(c);
+  const sem = cobSemaforo(c);
+  const diasTxt = d==null ? '<span class="help">s/factura</span>' : (d<=0 ? 'al día' : `${d}d`);
+  const facturaTxt = c.facturaNro
+    ? `${esc(c.facturaNro)}${c.facturaFecha?`<br><span class="help">${new Date(c.facturaFecha+'T00:00:00').toLocaleDateString('es-AR')}</span>`:''}`
+    : '<span class="help">—</span>';
   return `<tr class="clickable" data-id="${c.id}">
+    <td><span class="sem sem-${sem}" title="${sem}"></span></td>
     <td><strong>${esc(c.ref||'—')}</strong></td>
-    <td>${esc(upperName(c.razonSocial)||'—')}</td>
-    <td style="font-size:12px;color:var(--muted)">${esc(c.cuit||'—')}</td>
+    <td>${esc(upperName(c.razonSocial)||'—')}<br><span class="help">${esc(c.cuit||'')}</span></td>
+    <td style="font-size:12px">${facturaTxt}</td>
+    <td class="c" style="font-weight:600;color:${sem==='rojo'?'#b0584f':(sem==='amarillo'?'#b3853a':'#37432c')}">${diasTxt}</td>
     <td class="r">${sym} ${fmt(cobTotal(c))}</td>
-    <td class="r" style="color:#4f8a53">${sym} ${fmt(pag)}</td>
     <td class="r" style="color:${saldo>0?'#b3853a':'#4f8a53'};font-weight:700">${sym} ${fmt(saldo)}</td>
     <td><span class="badge cob-${est}">${COB_ESTADO_LBL[est]}</span></td>
   </tr>`;
@@ -2642,6 +2763,8 @@ function openCobranza(id){
       <div class="fld"><label>Total a cobrar</label><div class="val" style="font-weight:700">${sym} ${fmt(total)}</div></div>
       <div class="fld"><label>Cobrado</label><div class="val" style="color:#4f8a53">${sym} ${fmt(pag)}</div></div>
       <div class="fld"><label>Saldo pendiente</label><div class="val" style="color:${saldo>0?'#b3853a':'#4f8a53'};font-weight:700">${sym} ${fmt(saldo)}</div></div>
+      <div class="fld"><label>Factura (ERP)</label><div class="val">${c.facturaNro?esc(c.facturaNro):'<span class="help">— sin cargar —</span>'}</div></div>
+      <div class="fld"><label>Emisión / Ageing</label><div class="val">${c.facturaFecha?`${new Date(c.facturaFecha+'T00:00:00').toLocaleDateString('es-AR')} · <span style="color:${cobSemaforo(c)==='rojo'?'#b0584f':(cobSemaforo(c)==='amarillo'?'#b3853a':'#4f8a53')};font-weight:600">${(()=>{const d=cobDiasVencido(c);return d<=0?'al día':d+' días';})()}</span>`:'<span class="help">cargá la fecha para ageing</span>'}</div></div>
     </div>
 
     <div style="margin-top:16px">
@@ -2689,6 +2812,8 @@ function editCobranza(id){
       <div class="fld"><label>CUIT</label><input id="cobCuit" class="inp" value="${esc(c.cuit||'')}"></div>
       <div class="fld"><label>Monto base</label><input id="cobMonto" class="inp" value="${esc(String(c.montoBase||0))}"></div>
       <div class="fld"><label>Moneda</label><select id="cobMoneda" class="inp">${monedaOpts}</select></div>
+      <div class="fld"><label>Nº de factura <span class="help" style="font-weight:400">(del ERP)</span></label><input id="cobFactNro" class="inp" value="${esc(c.facturaNro||'')}" placeholder="A-0001-00012345"></div>
+      <div class="fld"><label>Fecha de emisión <span class="help" style="font-weight:400">(para ageing)</span></label><input id="cobFactFecha" class="inp" type="date" value="${esc(c.facturaFecha||'')}"></div>
     </div>
     <div class="fld" style="margin-top:12px">
       <label style="display:flex;align-items:center;justify-content:space-between">Forma de pago (concepto + monto)
@@ -2728,7 +2853,9 @@ async function saveCobranza(id){
       cuit: document.getElementById('cobCuit').value.trim()||null,
       monto_total: num(document.getElementById('cobMonto').value),
       moneda: document.getElementById('cobMoneda').value,
-      forma_pago: fp
+      forma_pago: fp,
+      factura_nro: document.getElementById('cobFactNro').value.trim()||null,
+      factura_fecha: document.getElementById('cobFactFecha').value||null
     });
     await reloadDB(); toast('Cobranza actualizada'); openCobranza(id);
   }catch(e){ toast('Error: '+e.message); }
