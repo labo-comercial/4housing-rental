@@ -316,6 +316,8 @@ textarea.inp{resize:vertical;min-height:60px;}
 .page table.items tbody tr:last-child td{border-bottom:none;}
 .page .it-num{color:var(--olive-deep);font-weight:600;text-align:center;width:58px;}
 .page .it-detail{font-weight:500;}
+.page .it-detail2{font-weight:400;font-size:.86em;color:#6f6a5c;margin-top:3px;line-height:1.3;}
+.page .it-desc-tag{font-weight:600;font-size:.8em;color:var(--olive-deep);margin-top:4px;letter-spacing:.02em;}
 .page .it-c{text-align:center;}
 .page .it-r{text-align:right;}
 .page .it-sub{text-align:right;font-weight:600;}
@@ -1363,7 +1365,7 @@ async function setQuoteState(id, state){
     VIEWS.quotes();
   }catch(e){ toast('Error: '+e.message); }
 }
-function quoteSubtotal(x){ return (x.items||[]).reduce((a,it)=>a + num(it.price)*num(it.qty)*itemMeses(it),0); }
+function quoteSubtotal(x){ return (x.items||[]).reduce((a,it)=>a + itemSubtotal(it),0); }
 // Monto del descuento según tipo: 'pct' (porcentaje del subtotal) o 'monto' (fijo). Sin descuento => 0.
 function quoteDescuento(x){
   const sub = quoteSubtotal(x);
@@ -1415,6 +1417,23 @@ function itemPlazoTexto(it){
 function itemTienePlazo(it){
   return (it && it.periodo && mesesDePeriodo(it.periodo)) || num(it&&it.plazo)>0;
 }
+// --- Descuento por línea ---
+// Importe bruto de una línea (sin descuento de línea): precio × cantidad × meses.
+function itemBruto(it){ return num(it&&it.price)*num(it&&it.qty)*itemMeses(it); }
+// Monto del descuento de la línea según su tipo ('pct' o 'monto'). 0 si no tiene.
+function itemDescMonto(it){
+  if(!it) return 0;
+  const v = num(it.descValor);
+  if(!v) return 0;
+  if(it.descTipo==='monto') return Math.min(v, itemBruto(it)); // no descontar más que el bruto
+  // por defecto/'pct': porcentaje del bruto, acotado 0–100
+  const pct = Math.max(0, Math.min(100, v));
+  return itemBruto(it) * pct/100;
+}
+// Subtotal final de la línea (bruto menos descuento de línea), nunca negativo.
+function itemSubtotal(it){ return Math.max(0, itemBruto(it) - itemDescMonto(it)); }
+// ¿La línea tiene descuento cargado?
+function itemTieneDesc(it){ return num(it&&it.descValor)>0; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 /* ================= CLIENTS ================= */
@@ -2139,7 +2158,7 @@ async function saveAct(oppId){
       descripcion: document.getElementById('aDesc').value.trim(),
       comercial: document.getElementById('aComercial').value.trim()||null
     });
-    await reloadDB(); toast('Gestión agregada'); openOpp(oppId);
+    await reloadDB(); toast('Gestión agregada'); refreshCurrent(); openOpp(oppId);
   }catch(e){ toast('Error: '+e.message); }
 }
 
@@ -2638,7 +2657,7 @@ async function saveProspGestion(id){
     // si estaba sin contactar, pasa a contactado
     const p=DB.prospectos.find(x=>x.id===id);
     if(p && p.estado==='sin_contactar'){ await SB.updateProspecto(id,{estado:'contactado'}); }
-    await reloadDB(); await loadProspeccion(true); toast('Gestión registrada'); openProspecto(id);
+    await reloadDB(); await loadProspeccion(true); toast('Gestión registrada'); refreshCurrent(); openProspecto(id);
   }catch(e){ toast('Error: '+e.message); }
 }
 async function convertirProspecto(id){
@@ -3165,7 +3184,7 @@ async function saveCobranza(id){
       factura_nro: document.getElementById('cobFactNro').value.trim()||null,
       factura_fecha: document.getElementById('cobFactFecha').value||null
     });
-    await reloadDB(); toast('Cobranza actualizada'); openCobranza(id);
+    await reloadDB(); toast('Cobranza actualizada'); refreshCurrent(); openCobranza(id);
   }catch(e){ toast('Error: '+e.message); }
 }
 
@@ -3194,7 +3213,7 @@ async function savePago(cobId){
     }));
     await reloadDB();
     await recalcEstadoCobranza(cobId);
-    await reloadDB(); toast('Pago registrado'); openCobranza(cobId);
+    await reloadDB(); toast('Pago registrado'); refreshCurrent(); openCobranza(cobId);
   }catch(e){ toast('Error: '+e.message); }
 }
 async function delPago(pagoId, cobId){
@@ -3204,7 +3223,7 @@ async function delPago(pagoId, cobId){
     await reloadDB();
     await recalcEstadoCobranza(cobId);
     await reloadDB();
-    toast('Pago eliminado'); openCobranza(cobId);
+    toast('Pago eliminado'); refreshCurrent(); openCobranza(cobId);
   }catch(e){ toast('Error: '+e.message); }
 }
 // Recalcula y persiste el estado (pendiente/parcial/cobrado) según pagos vs total efectivo.
@@ -3233,7 +3252,7 @@ async function saveAdicional(cobId){
     await SB.addAdicional(adicionalToRow({ cobranzaId:cobId, descripcion:desc, monto }));
     await reloadDB();
     await recalcEstadoCobranza(cobId); // el total subió: puede dejar de estar "cobrado"
-    await reloadDB(); toast('Adicional agregado'); openCobranza(cobId);
+    await reloadDB(); toast('Adicional agregado'); refreshCurrent(); openCobranza(cobId);
   }catch(e){ toast('Error: '+e.message); }
 }
 async function delAdicional(adicId, cobId){
@@ -3242,7 +3261,7 @@ async function delAdicional(adicId, cobId){
     await SB.delAdicional(adicId);
     await reloadDB();
     await recalcEstadoCobranza(cobId);
-    await reloadDB(); toast('Adicional eliminado'); openCobranza(cobId);
+    await reloadDB(); toast('Adicional eliminado'); refreshCurrent(); openCobranza(cobId);
   }catch(e){ toast('Error: '+e.message); }
 }
 window.addAdicionalModal=addAdicionalModal; window.saveAdicional=saveAdicional; window.delAdicional=delAdicional;
@@ -3283,14 +3302,14 @@ async function saveGestion(cobId){
       fecha: document.getElementById('gstFecha').value||null,
       tipo, detalle: detalle||null, usuario: usuario||null
     }));
-    await reloadDB(); toast('Gestión registrada'); openCobranza(cobId);
+    await reloadDB(); toast('Gestión registrada'); refreshCurrent(); openCobranza(cobId);
   }catch(e){ toast('Error: '+e.message); }
 }
 async function delGestion(gestId, cobId){
   if(!confirm('¿Quitar esta gestión de la bitácora?')) return;
   try{
     await SB.delGestion(gestId);
-    await reloadDB(); toast('Gestión eliminada'); openCobranza(cobId);
+    await reloadDB(); toast('Gestión eliminada'); refreshCurrent(); openCobranza(cobId);
   }catch(e){ toast('Error: '+e.message); }
 }
 window.addGestionModal=addGestionModal; window.saveGestion=saveGestion; window.delGestion=delGestion;
@@ -3414,7 +3433,7 @@ async function newQuote(clientId){
     title:'OFERTA ECONÓMICA', dateISO:todayISO(),
     clientId: c?c.id:'', client:c?c.name:'', attn:c?c.attn:'', email:c?c.email:'', phone:c?c.phone:'',
     currency:'USD', showTotal:true, descTipo:'pct', descValor:'', comercial:'', version:1,
-    items:[{ catId:'', detail:'', price:'', qty:1, plazo:'', periodo:'' }],
+    items:[{ catId:'', detail:'', detail2:'', price:'', qty:1, plazo:'', periodo:'', descTipo:'', descValor:'' }],
     pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
     nota1:'Los traslados e instalación se cotizan por separado.',
     nota2:'Cualquier modificación en las condiciones de la presente propuesta será informada oportunamente.',
@@ -3441,7 +3460,7 @@ async function cotizarOportunidad(oppId){
     clientId: c?c.id:(o.clientId||''), client:c?c.name:oppClientName(o),
     attn:c?c.attn:'', email:c?c.email:'', phone:c?c.phone:'',
     currency:'USD', showTotal:true, descTipo:'pct', descValor:'', comercial:o.comercial||'', version:1,
-    items:[{ catId:'', detail:'', price:'', qty:1, plazo:'', periodo:'' }],
+    items:[{ catId:'', detail:'', detail2:'', price:'', qty:1, plazo:'', periodo:'', descTipo:'', descValor:'' }],
     pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
     nota1:'Los traslados e instalación se cotizan por separado.',
     nota2:'Cualquier modificación en las condiciones de la presente propuesta será informada oportunamente.',
@@ -3631,7 +3650,8 @@ function renderItems(){
         <select class="i-cat">${opts(it)}</select>
         <button class="del" onclick="delItem(${i})">×</button>
       </div>
-      <div class="field" style="margin-bottom:9px"><input class="i-detail" placeholder="Detalle del ítem" value="${esc(it.detail)}" style="width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:8px 10px;font-size:13px;background:#fff"></div>
+      <div class="field" style="margin-bottom:7px"><input class="i-detail" placeholder="Detalle del ítem" value="${esc(it.detail)}" style="width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:8px 10px;font-size:13px;background:#fff"></div>
+      <div class="field" style="margin-bottom:9px"><input class="i-detail2" placeholder="Segunda línea (opcional) — ej. Incluye traslado hasta…" value="${esc(it.detail2||'')}" style="width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:7px 10px;font-size:12px;background:#fbfbf8;color:#5a5648"></div>
       <div class="nums">
         <div><label>Unitario (${esc(CUR.currency)})</label><input class="i-price" type="number" value="${it.price}"></div>
         <div><label>Cant.</label><input class="i-qty" type="number" value="${it.qty}"></div>
@@ -3639,7 +3659,11 @@ function renderItems(){
         <div class="i-plazo-wrap"${it.periodo?' style="display:none"':''}><label>Plazo (meses)</label><input class="i-plazo" type="number" value="${it.plazo}"></div>
         <div class="i-periodo-wrap"${it.periodo?'':' style="display:none"'}><label>Período (MMMAA-MMMAA)</label><input class="i-periodo" type="text" placeholder="JUN26-AGO26" value="${esc(it.periodo||'')}"><div class="i-periodo-msg" style="font-size:11px;margin-top:3px;line-height:1.2"></div></div>
       </div>
-      <div class="subline">Subtotal: ${esc(CUR.currency)} ${fmt(num(it.price)*num(it.qty)*itemMeses(it))}</div>
+      <div class="i-desc-row" style="display:grid;grid-template-columns:130px 1fr;gap:8px;margin-top:8px;align-items:end">
+        <div><label style="font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:3px">Desc. línea</label><select class="i-desctipo" style="width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:7px 8px;font-size:13px;background:#fff"><option value="">Sin descuento</option><option value="pct"${it.descTipo==='pct'?' selected':''}>Porcentaje (%)</option><option value="monto"${it.descTipo==='monto'?' selected':''}>Monto fijo (${esc(CUR.currency)})</option></select></div>
+        <div class="i-descval-wrap"${it.descValor?'':' style="display:none"'}><label style="font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:3px">Valor</label><input class="i-descvalor" type="number" value="${it.descValor||''}" placeholder="0" style="width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:7px 8px;font-size:13px;background:#fff"></div>
+      </div>
+      <div class="subline">${itemTieneDesc(it)?`<span style="color:#8a8578">Bruto: ${esc(CUR.currency)} ${fmt(itemBruto(it))} · Desc: −${esc(CUR.currency)} ${fmt(itemDescMonto(it))}</span><br>`:''}Subtotal: ${esc(CUR.currency)} ${fmt(itemSubtotal(it))}</div>
     </div>`).join('');
   el.querySelectorAll('.itemline').forEach(line=>{
     const i=+line.dataset.i, it=CUR.items[i];
@@ -3647,9 +3671,21 @@ function renderItems(){
       if(c){ it.detail=c.name; it.price=c.price; line.querySelector('.i-detail').value=c.name; line.querySelector('.i-price').value=c.price; }
       sub(line,it); renderDoc(); };
     line.querySelector('.i-detail').oninput=e=>{ it.detail=e.target.value; renderDoc(); };
+    line.querySelector('.i-detail2').oninput=e=>{ it.detail2=e.target.value; renderDoc(); };
     line.querySelector('.i-price').oninput=e=>{ it.price=e.target.value; sub(line,it); renderDoc(); };
     line.querySelector('.i-qty').oninput=e=>{ it.qty=e.target.value; sub(line,it); renderDoc(); };
     line.querySelector('.i-plazo').oninput=e=>{ it.plazo=e.target.value; sub(line,it); renderDoc(); };
+    // Descuento de línea
+    const descTipoSel=line.querySelector('.i-desctipo'),
+          descValWrap=line.querySelector('.i-descval-wrap'),
+          descValInp=line.querySelector('.i-descvalor');
+    descTipoSel.onchange=e=>{
+      it.descTipo=e.target.value;
+      if(!it.descTipo){ it.descValor=''; descValInp.value=''; descValWrap.style.display='none'; }
+      else { descValWrap.style.display=''; }
+      sub(line,it); renderDoc();
+    };
+    descValInp.oninput=e=>{ it.descValor=e.target.value; sub(line,it); renderDoc(); };
     const modoSel=line.querySelector('.i-modo'),
           plazoWrap=line.querySelector('.i-plazo-wrap'),
           periodoWrap=line.querySelector('.i-periodo-wrap'),
@@ -3671,9 +3707,13 @@ function renderItems(){
     if(it.periodo) validarPeriodo();
   });
 }
-function sub(line,it){ line.querySelector('.subline').textContent='Subtotal: '+CUR.currency+' '+fmt(num(it.price)*num(it.qty)*itemMeses(it)); }
-function addItem(){ CUR.items.push({catId:'',detail:'',price:'',qty:1,plazo:'',periodo:''}); renderItems(); renderDoc(); }
-function delItem(i){ CUR.items.splice(i,1); if(!CUR.items.length) CUR.items.push({catId:'',detail:'',price:'',qty:1,plazo:'',periodo:''}); renderItems(); renderDoc(); }
+function sub(line,it){
+  const sl=line.querySelector('.subline');
+  const pre = itemTieneDesc(it) ? `<span style="color:#8a8578">Bruto: ${CUR.currency} ${fmt(itemBruto(it))} · Desc: −${CUR.currency} ${fmt(itemDescMonto(it))}</span><br>` : '';
+  sl.innerHTML = pre + 'Subtotal: '+CUR.currency+' '+fmt(itemSubtotal(it));
+}
+function addItem(){ CUR.items.push({catId:'',detail:'',detail2:'',price:'',qty:1,plazo:'',periodo:'',descTipo:'',descValor:''}); renderItems(); renderDoc(); }
+function delItem(i){ CUR.items.splice(i,1); if(!CUR.items.length) CUR.items.push({catId:'',detail:'',detail2:'',price:'',qty:1,plazo:'',periodo:'',descTipo:'',descValor:''}); renderItems(); renderDoc(); }
 
 /* ---- live document render (mirrors the source PDF) ---- */
 function renderDoc(){
@@ -3685,15 +3725,28 @@ function renderDoc(){
   // Si todos los que tienen valor usan meses numéricos -> "PLAZO (MESES)"; si hay algún período -> "PLAZO"
   const hayPeriodo = CUR.items.some(it=>it.periodo && mesesDePeriodo(it.periodo));
   const plazoHeader = hayPeriodo ? 'PLAZO' : 'PLAZO (MESES)';
-  const rows=CUR.items.map((it,i)=>`
+  const rows=CUR.items.map((it,i)=>{
+    const detalle = esc(it.detail)||'&nbsp;';
+    const sub2 = (it.detail2 && it.detail2.trim())
+      ? `<div class="it-detail2">${esc(it.detail2)}</div>` : '';
+    // Etiqueta del descuento de línea, si lo hay
+    let descTag = '';
+    if(itemTieneDesc(it)){
+      const etq = it.descTipo==='monto'
+        ? `−${sym} ${fmt(itemDescMonto(it))}`
+        : `−${fmt(num(it.descValor))}%`;
+      descTag = `<div class="it-desc-tag">Descuento ${etq}</div>`;
+    }
+    return `
     <tr>
       <td class="it-num">${String(i+1).padStart(2,'0')}</td>
-      <td class="it-detail">${esc(it.detail)||'&nbsp;'}</td>
+      <td class="it-detail">${detalle}${sub2}${descTag}</td>
       <td class="it-r">${fmt(num(it.price))}</td>
       <td class="it-c">${esc(it.qty)}</td>
       ${hasPlazo?`<td class="it-c">${itemPlazoTexto(it)}</td>`:''}
-      <td class="it-sub col-sub">${fmt(num(it.price)*num(it.qty)*itemMeses(it))}</td>
-    </tr>`).join('');
+      <td class="it-sub col-sub">${fmt(itemSubtotal(it))}</td>
+    </tr>`;
+  }).join('');
   m.innerHTML = `
   <div class="page ${CUR.showTotal?'':'no-total'}">
     <div class="head">
