@@ -538,10 +538,17 @@ const ISO_SEAL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAaQAAAGlCAYAAAC1
 const SETTINGS = {
   email:'info@4housing.com.ar', web:'www.4housing.com.ar', tel:'+54 9 11 6993-3127',
   ivaUSD:'Valores expresados en USD (Dólares oficiales BNA vendedor billete). IVA no incluido (21%). El subtotal de cada ítem contempla el plazo de alquiler (meses).',
-  ivaARS:'Valores expresados en Pesos Argentinos (ARS). IVA no incluido (21%). El subtotal de cada ítem contempla el plazo de alquiler (meses).'
+  ivaARS:'Valores expresados en Pesos Argentinos (ARS). IVA no incluido (21%). El subtotal de cada ítem contempla el plazo de alquiler (meses).',
+  ivaVentaUSD:'Valores expresados en USD (Dólares oficiales BNA vendedor billete). IVA no incluido (21%).',
+  ivaVentaARS:'Valores expresados en Pesos Argentinos (ARS). IVA no incluido (21%).'
 };
 SETTINGS.iva = SETTINGS.ivaUSD; // compat: texto por defecto inicial (USD)
-function ivaDefault(cur){ return cur==='ARS' ? SETTINGS.ivaARS : SETTINGS.ivaUSD; }
+// Texto del pie (IVA) según moneda y unidad de negocio.
+// En Ventas no se menciona el "plazo de alquiler" (precio único, sin plazo).
+function ivaDefault(cur, unidad){
+  if(unidad==='ventas') return cur==='ARS' ? SETTINGS.ivaVentaARS : SETTINGS.ivaVentaUSD;
+  return cur==='ARS' ? SETTINGS.ivaARS : SETTINGS.ivaUSD;
+}
 const STATES = [
   {id:'nuevo',      label:'Nuevo - Pendiente'},
   {id:'borrador',   label:'En proceso - Borrador'},
@@ -705,6 +712,7 @@ function quoteToRow(q){
     pago: q.pago, validez: q.validez, entrega: q.entrega, minimo: q.minimo,
     nota1: q.nota1, nota2: q.nota2, ivanote: q.ivanote, estado: q.state,
     comercial: q.comercial || null,
+    unidad_negocio: q.unidad || 'rental',
     desc_tipo: q.descTipo || 'pct', desc_valor: (q.descValor===''||q.descValor==null)?0:num(q.descValor),
     updated_at: new Date().toISOString()
   };
@@ -725,6 +733,7 @@ function rowToQuote(r){
     pago: r.pago||'', validez: r.validez||'', entrega: r.entrega||'', minimo: r.minimo||'',
     nota1: r.nota1||'', nota2: r.nota2||'', ivanote: r.ivanote||'',
     comercial: r.comercial||'',
+    unidad: r.unidad_negocio||'rental',
     descTipo: r.desc_tipo||'pct', descValor: (r.desc_valor!=null && r.desc_valor!==0) ? r.desc_valor : '',
     state: r.estado||'borrador', created: r.created_at ? Date.parse(r.created_at) : Date.now()
   };
@@ -2065,13 +2074,15 @@ async function crearCobranzaDesdeQuote(quoteId){
     const montoBase = quoteTotal(q);
     const moneda    = q.currency||'USD';
     const formaPago = q.pago ? [{concepto:q.pago, monto:null}] : [];
+    const unidadQ   = (q.unidad==='ventas') ? 'ventas' : 'rental';
+    const unidadLbl = unidadQ==='ventas' ? 'Ventas' : 'Rental';
     if(!yaExiste){
       await SB.addCobranza(cobranzaToRow({
         ref: q.ref||'', oppId: opp?opp.id:'', clientId: q.clientId||'',
         razonSocial: cli ? cli.name : (q.client||''),
         cuit: cli ? (cli.cuit||'') : '',
-        montoBase, moneda, formaPago, estado:'pendiente', unidad:'rental',
-        notas: 'Generada al ganar la cotización de Rental.'
+        montoBase, moneda, formaPago, estado:'pendiente', unidad:unidadQ,
+        notas: `Generada al ganar la cotización de ${unidadLbl}.`
       }));
       toast('Venta enviada a Cobranzas');
     }
@@ -2083,7 +2094,7 @@ async function crearCobranzaDesdeQuote(quoteId){
       moneda,
       forma_pago: q.pago || '(a completar por Facturación)',
       comercial: q.comercial||'',
-      unidad: 'rental'
+      unidad: unidadQ
     });
   }catch(e){ console.warn('Cobranza (quote):', e.message); }
 }
@@ -2175,7 +2186,8 @@ window.ventasSort = { col:'created', dir:-1 };
 
 VIEWS.ventas = function(){
   setHeader('Ventas','Seguimiento de oportunidades y cotizaciones',
-    `<button class="btn" onclick="newOppVentas()">${ICO.plus} Nueva oportunidad</button>`);
+    `<button class="btn" onclick="newOppVentas()">${ICO.plus} Nueva oportunidad</button>
+     <button class="btn ghost" onclick="newQuote(null,'ventas')">${ICO.plus} Nueva cotización</button>`);
 
   let list = DB.opps.filter(o=> o.unidad==='ventas' || o.unidad==='ambas');
   if(ventasFiltroEstado) list = list.filter(o=>o.state===ventasFiltroEstado);
@@ -2202,6 +2214,12 @@ VIEWS.ventas = function(){
 
   const optSel = (cur, pairs)=> pairs.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('');
 
+  // Cotizaciones formales de la unidad Ventas (mismo patrón que Rental)
+  let cotVentas = DB.quotes.filter(q=> q.unidad==='ventas');
+  if(ventasFiltroEstado) cotVentas = cotVentas.filter(q=> q.state===ventasFiltroEstado);
+  if(filtroVendedor) cotVentas = cotVentas.filter(q=> q.comercial===filtroVendedor);
+  const gruposVentas = groupQuotes(cotVentas);
+
   C().innerHTML = `
     <div class="opp-filters">
       <select id="vEstado">
@@ -2224,11 +2242,28 @@ VIEWS.ventas = function(){
         </tr></thead>
         <tbody>${list.map(rowOpp).join('')}</tbody></table>`
       : `<div class="empty" style="padding:40px">No hay oportunidades de ventas todavía. Se crean al convertir un prospecto, o con “Nueva oportunidad”.</div>`}
+    </div></div>
+
+    <div style="font-size:15px;font-weight:700;color:#37432c;margin:22px 0 10px">Cotizaciones de ventas</div>
+    <div class="card"><div class="card-b" style="padding:0">
+      ${gruposVentas.length ? `<table class="grid">
+        <thead><tr>
+          <th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th>
+          <th>Estado</th><th class="r">Total</th><th class="r">Fecha</th><th></th>
+        </tr></thead>
+        <tbody>${gruposVentas.map(rowGroup).join('')}</tbody></table>`
+      : `<div class="empty" style="padding:34px">No hay cotizaciones de ventas todavía. Creá una con “Nueva cotización”.</div>`}
     </div></div>`;
 
   document.getElementById('vEstado').onchange=e=>{ ventasFiltroEstado=e.target.value; VIEWS.ventas(); };
   { const v=document.getElementById('vVend'); if(v) v.onchange=()=>{ filtroVendedor=v.value; VIEWS.ventas(); }; }
-  C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openOpp(tr.dataset.id));
+  // Cambios de estado en cotizaciones de ventas
+  C().querySelectorAll('.state-sel').forEach(sel=>{
+    sel.onchange=e=>{ e.stopPropagation(); setQuoteState(sel.dataset.id, sel.value); };
+    sel.onclick=e=>e.stopPropagation();
+  });
+  // Filas de oportunidad abren su detalle; las de cotización abren el editor (ya tienen onclick inline)
+  C().querySelectorAll('tr.clickable:not(.ver-main):not(.ver-child)').forEach(tr=>{ if(tr.dataset.id) tr.onclick=()=> openOpp(tr.dataset.id); });
 };
 
 function newOppVentas(){
@@ -3433,10 +3468,11 @@ window.printEstadoCuenta = printEstadoCuenta;
 
 /* ================= QUOTE EDITOR ================= */
 let CUR=null; // working quote
-async function newQuote(clientId){
+async function newQuote(clientId, unidad){
+  unidad = unidad || 'rental';
   const c = clientId? DB.clients.find(x=>x.id===clientId) : null;
   CUR = {
-    id:null, seq:null, ref:'(asignando…)',
+    id:null, seq:null, ref:'(asignando…)', unidad,
     title:'OFERTA ECONÓMICA', dateISO:todayISO(),
     clientId: c?c.id:'', client:c?c.name:'', attn:c?c.attn:'', email:c?c.email:'', phone:c?c.phone:'',
     currency:'USD', showTotal:true, descTipo:'pct', descValor:'', comercial:'', version:1,
@@ -3444,7 +3480,7 @@ async function newQuote(clientId){
     pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
     nota1:'Los traslados e instalación se cotizan por separado.',
     nota2:'Cualquier modificación en las condiciones de la presente propuesta será informada oportunamente.',
-    ivanote:ivaDefault('USD'),
+    ivanote:ivaDefault('USD', unidad),
     state:'borrador', created:Date.now(), fromOppId:null,
   };
   renderEditor(true);
@@ -3461,8 +3497,9 @@ async function newQuote(clientId){
 async function cotizarOportunidad(oppId){
   const o = DB.opps.find(x=>x.id===oppId); if(!o) return;
   const c = o.clientId ? DB.clients.find(x=>x.id===o.clientId) : null;
+  const unidad = (o.unidad==='ventas') ? 'ventas' : 'rental';
   CUR = {
-    id:null, seq:null, ref:'(asignando…)',
+    id:null, seq:null, ref:'(asignando…)', unidad,
     title:'OFERTA ECONÓMICA', dateISO:todayISO(),
     clientId: c?c.id:(o.clientId||''), client:c?c.name:oppClientName(o),
     attn:c?c.attn:'', email:c?c.email:'', phone:c?c.phone:'',
@@ -3471,7 +3508,7 @@ async function cotizarOportunidad(oppId){
     pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
     nota1:'Los traslados e instalación se cotizan por separado.',
     nota2:'Cualquier modificación en las condiciones de la presente propuesta será informada oportunamente.',
-    ivanote:ivaDefault('USD'),
+    ivanote:ivaDefault('USD', unidad),
     state:'borrador', created:Date.now(), fromOppId:oppId,
   };
   closeModal();
@@ -3492,6 +3529,7 @@ function editQuote(id){
   CUR = JSON.parse(JSON.stringify(DB.quotes.find(x=>x.id===id)));
   if(!CUR.dateISO) CUR.dateISO = todayISO(); // compat. cotizaciones previas
   if(!CUR.version) CUR.version = parseVer(CUR.ref);
+  if(!CUR.unidad) CUR.unidad = 'rental'; // compat. cotizaciones previas
   renderEditor(false);
 }
 async function newVersion(id){
@@ -3551,8 +3589,9 @@ async function delQuote(id){
 }
 window.delQuote = delQuote;
 function renderEditor(isNew){
+  const volverView = (CUR.unidad==='ventas') ? 'ventas' : 'quotes';
   setHeader(isNew?'Nueva cotización':'Editar cotización', CUR.ref,
-    `<button class="btn ghost" onclick="go('quotes')">← Volver</button>
+    `<button class="btn ghost" onclick="go('${volverView}')">← Volver</button>
      ${(!isNew && CUR.id)?`<button class="btn ghost" onclick="newVersion('${CUR.id}')">${ICO.copy||ICO.plus} Nueva versión</button>`:''}
      ${(!isNew && CUR.id)?`<button class="btn danger" onclick="delQuote('${CUR.id}')">Eliminar</button>`:''}
      <button class="btn ghost" onclick="printQuote()">${ICO.print} Imprimir / PDF</button>
@@ -3593,7 +3632,7 @@ function renderEditor(isNew){
         </div>
         <div class="frow c2">
           <div class="field"><label>Plazo de entrega</label><input id="e_entrega" value="${esc(CUR.entrega)}"></div>
-          <div class="field"><label>Plazo mínimo de alquiler</label><input id="e_minimo" value="${esc(CUR.minimo)}"></div>
+          ${CUR.unidad==='ventas' ? '' : `<div class="field"><label>Plazo mínimo de alquiler</label><input id="e_minimo" value="${esc(CUR.minimo)}"></div>`}
         </div>
         <div class="frow c2">
           <div class="field"><label>Descuento</label><select id="e_desctipo"><option value="pct" ${CUR.descTipo!=='monto'?'selected':''}>Porcentaje (%)</option><option value="monto" ${CUR.descTipo==='monto'?'selected':''}>Monto fijo (${esc(CUR.currency)})</option></select></div>
@@ -3619,7 +3658,7 @@ function renderEditor(isNew){
     el.oninput=el.onchange=()=>{ CUR[key]= (el.type==='checkbox')?el.checked:el.value; if(after)after(); renderDoc(); }; };
   bind('e_clientname','client'); bind('e_attn','attn'); bind('e_phone','phone'); bind('e_email','email');
   bind('e_date','dateISO'); bind('e_state','state'); bind('e_comercial','comercial');
-  bind('e_pago','pago'); bind('e_validez','validez'); bind('e_entrega','entrega'); bind('e_minimo','minimo');
+  bind('e_pago','pago'); bind('e_validez','validez'); bind('e_entrega','entrega'); if(document.getElementById('e_minimo')) bind('e_minimo','minimo');
   bind('e_desctipo','descTipo'); bind('e_descvalor','descValor');
   bind('e_nota1','nota1'); bind('e_nota2','nota2'); bind('e_ivanote','ivanote'); bind('e_showtotal','showTotal');
   // Moneda: además de cambiar la moneda, actualiza la leyenda del IVA si estaba en el texto por defecto
@@ -3627,8 +3666,8 @@ function renderEditor(isNew){
     const prev = CUR.currency;
     CUR.currency = e.target.value;
     // si el ivanote era el default de la moneda anterior (o vacío), lo cambio al de la nueva
-    if(!CUR.ivanote || CUR.ivanote.trim()==='' || CUR.ivanote===ivaDefault(prev)){
-      CUR.ivanote = ivaDefault(CUR.currency);
+    if(!CUR.ivanote || CUR.ivanote.trim()==='' || CUR.ivanote===ivaDefault(prev, CUR.unidad)){
+      CUR.ivanote = ivaDefault(CUR.currency, CUR.unidad);
       const ivaEl = document.getElementById('e_ivanote');
       if(ivaEl) ivaEl.value = CUR.ivanote;
     }
@@ -3650,6 +3689,7 @@ function renderEditor(isNew){
 
 function renderItems(){
   const el=document.getElementById('itemList');
+  const esVenta = (CUR.unidad==='ventas'); // Ventas: precio único, sin plazo ni período
   const opts = c=>`<option value="">— ítem manual —</option>`+DB.catalog.map(x=>`<option value="${x.id}" ${x.id===c.catId?'selected':''}>${esc(x.name)}${x.zona?' ['+esc(x.zona)+']':''} — USD ${fmt(x.price)}</option>`).join('');
   el.innerHTML = CUR.items.map((it,i)=>`
     <div class="itemline" data-i="${i}">
@@ -3662,9 +3702,9 @@ function renderItems(){
       <div class="nums">
         <div><label>Unitario (${esc(CUR.currency)})</label><input class="i-price" type="number" value="${it.price}"></div>
         <div><label>Cant.</label><input class="i-qty" type="number" value="${it.qty}"></div>
-        <div><label>Modo</label><select class="i-modo"><option value="meses"${it.periodo?'':' selected'}>Plazo (meses)</option><option value="periodo"${it.periodo?' selected':''}>Período</option></select></div>
+        ${esVenta?'':`<div><label>Modo</label><select class="i-modo"><option value="meses"${it.periodo?'':' selected'}>Plazo (meses)</option><option value="periodo"${it.periodo?' selected':''}>Período</option></select></div>
         <div class="i-plazo-wrap"${it.periodo?' style="display:none"':''}><label>Plazo (meses)</label><input class="i-plazo" type="number" value="${it.plazo}"></div>
-        <div class="i-periodo-wrap"${it.periodo?'':' style="display:none"'}><label>Período (MMMAA-MMMAA)</label><input class="i-periodo" type="text" placeholder="JUN26-AGO26" value="${esc(it.periodo||'')}"><div class="i-periodo-msg" style="font-size:11px;margin-top:3px;line-height:1.2"></div></div>
+        <div class="i-periodo-wrap"${it.periodo?'':' style="display:none"'}><label>Período (MMMAA-MMMAA)</label><input class="i-periodo" type="text" placeholder="JUN26-AGO26" value="${esc(it.periodo||'')}"><div class="i-periodo-msg" style="font-size:11px;margin-top:3px;line-height:1.2"></div></div>`}
       </div>
       <div class="i-desc-row" style="display:grid;grid-template-columns:130px 1fr;gap:8px;margin-top:8px;align-items:end">
         <div><label style="font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:3px">Desc. línea</label><select class="i-desctipo" style="width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:7px 8px;font-size:13px;background:#fff"><option value="">Sin descuento</option><option value="pct"${it.descTipo==='pct'?' selected':''}>Porcentaje (%)</option><option value="monto"${it.descTipo==='monto'?' selected':''}>Monto fijo (${esc(CUR.currency)})</option></select></div>
@@ -3681,7 +3721,7 @@ function renderItems(){
     line.querySelector('.i-detail2').oninput=e=>{ it.detail2=e.target.value; renderDoc(); };
     line.querySelector('.i-price').oninput=e=>{ it.price=e.target.value; sub(line,it); renderDoc(); };
     line.querySelector('.i-qty').oninput=e=>{ it.qty=e.target.value; sub(line,it); renderDoc(); };
-    line.querySelector('.i-plazo').oninput=e=>{ it.plazo=e.target.value; sub(line,it); renderDoc(); };
+    { const pl=line.querySelector('.i-plazo'); if(pl) pl.oninput=e=>{ it.plazo=e.target.value; sub(line,it); renderDoc(); }; }
     // Descuento de línea
     const descTipoSel=line.querySelector('.i-desctipo'),
           descValWrap=line.querySelector('.i-descval-wrap'),
@@ -3698,6 +3738,7 @@ function renderItems(){
           periodoWrap=line.querySelector('.i-periodo-wrap'),
           periodoInp=line.querySelector('.i-periodo'),
           periodoMsg=line.querySelector('.i-periodo-msg');
+    if(modoSel){
     function validarPeriodo(){
       const v=periodoInp.value.trim();
       if(!v){ it.periodo=''; periodoMsg.textContent=''; periodoInp.style.borderColor=''; return; }
@@ -3712,6 +3753,7 @@ function renderItems(){
     };
     periodoInp.oninput=e=>{ validarPeriodo(); sub(line,it); renderDoc(); };
     if(it.periodo) validarPeriodo();
+    }
   });
 }
 function sub(line,it){
@@ -3727,8 +3769,9 @@ function renderDoc(){
   const m=document.getElementById('docMount'); if(!m) return;
   const cur=esc(CUR.currency||'USD');
   const sym=curSym(CUR.currency);
-  // ¿algún ítem tiene plazo o período? Si no, la columna desaparece y se reacomoda la grilla
-  const hasPlazo = CUR.items.some(it=>itemTienePlazo(it));
+  // ¿algún ítem tiene plazo o período? Si no, la columna desaparece y se reacomoda la grilla.
+  // En Ventas nunca hay plazo (precio único).
+  const hasPlazo = (CUR.unidad!=='ventas') && CUR.items.some(it=>itemTienePlazo(it));
   // Si todos los que tienen valor usan meses numéricos -> "PLAZO (MESES)"; si hay algún período -> "PLAZO"
   const hayPeriodo = CUR.items.some(it=>it.periodo && mesesDePeriodo(it.periodo));
   const plazoHeader = hayPeriodo ? 'PLAZO' : 'PLAZO (MESES)';
@@ -3795,7 +3838,7 @@ function renderDoc(){
       <div><div class="cd-top"><span class="cd-num">02.</span></div><div class="cd-label">FORMA DE PAGO</div><div class="cd-val">${esc(CUR.pago)}</div></div>
       <div><div class="cd-top"><span class="cd-num">03.</span></div><div class="cd-label">VALIDEZ DE OFERTA</div><div class="cd-val">${esc(CUR.validez)}</div></div>
       <div><div class="cd-top"><span class="cd-num">04.</span></div><div class="cd-label">PLAZO DE ENTREGA</div><div class="cd-val">${esc(CUR.entrega)}</div></div>
-      <div><div class="cd-top"><span class="cd-num">05.</span></div><div class="cd-label">PLAZO MÍNIMO DE ALQUILER</div><div class="cd-val">${esc(CUR.minimo)}</div></div>
+      ${CUR.unidad==='ventas' ? '' : `<div><div class="cd-top"><span class="cd-num">05.</span></div><div class="cd-label">PLAZO MÍNIMO DE ALQUILER</div><div class="cd-val">${esc(CUR.minimo)}</div></div>`}
     </div>
     ${(esc(CUR.nota1).trim()||esc(CUR.nota2).trim()) ? `<div class="notas"><div class="nt-head">NOTAS</div><div class="nt-body"><div>${esc(CUR.nota1)}</div><div>${esc(CUR.nota2)}</div></div></div>` : ''}
     <div class="firma"><span class="small">DEPARTAMENTO COMERCIAL</span>${CUR.comercial?`<span class="firma-nombre">${esc(CUR.comercial)}</span>`:''}</div>
@@ -3863,7 +3906,7 @@ async function saveQuote(opts){
       await reloadDB();
     }
     if(CUR.state==='ganada' && CUR.id){ await reloadDB(); await crearCobranzaDesdeQuote(CUR.id); }
-    if(!opts.silent){ toast('Cotización guardada'); go('quotes'); }
+    if(!opts.silent){ toast('Cotización guardada'); go(CUR.unidad==='ventas' ? 'ventas' : 'quotes'); }
   }catch(e){ toast('Error al guardar: '+e.message); throw e; }
 }
 function quoteTipologia(){
