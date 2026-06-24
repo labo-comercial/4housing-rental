@@ -676,7 +676,7 @@ const SB = {
   delQuote:    (id) => sbFetch('/cotizaciones?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
   // ---- Contador (número de oferta) ----
   // Incrementa atómicamente vía función RPC y devuelve el nuevo número
-  nextSeq:     () => sbFetch('/rpc/next_seq', {method:'POST', body: JSON.stringify({})}),
+  nextSeq:     (unidad) => sbFetch('/rpc/next_seq_un', {method:'POST', body: JSON.stringify({p_unidad: (unidad==='ventas'?'ventas':'rental')})}),
   peekSeq:     () => sbFetch('/contador?select=seq&id=eq.1').then(r=> r[0]?r[0].seq:1),
   // ---- Oportunidades ----
   listOpps:    () => sbFetch('/oportunidades?select=*&order=created_at.desc'),
@@ -734,24 +734,25 @@ function quoteToRow(q){
 }
 function parseVer(ref){
   const s = String(ref||'');
-  // Rental: "0001 · VER 02"  → captura el número tras "VER"
-  let m = /VER\s*0*([0-9]+)/i.exec(s);
+  // Nuevo formato unificado: "OE-R-0001-02" / "OE-V-4400-02" → último grupo = versión
+  let m = /^OE-[RV]-\d+-0*([0-9]+)/i.exec(s);
   if(m) return parseInt(m[1],10);
-  // Ventas: "OE-0001-02"     → captura el último grupo numérico (la versión)
+  // Rental antiguo: "0001 · VER 02"
+  m = /VER\s*0*([0-9]+)/i.exec(s);
+  if(m) return parseInt(m[1],10);
+  // Ventas intermedio: "OE-0001-02"
   m = /^OE-\d+-0*([0-9]+)/i.exec(s);
   if(m) return parseInt(m[1],10);
   return 1;
 }
-// Construye el número de referencia: "0001 · VER 01" (nº de oferta padStart 4 + versión padStart 2)
+// Construye la referencia homogénea: OE-{R|V}-{nº oferta}-{versión}
+//   Rental:  OE-R-0001-01
+//   Ventas:  OE-V-4400-01
 function refStr(seq, version, unidad){
   const ver = String(version||1).padStart(2,'0');
-  // Ventas: formato OE-0001-01. Rental: formato clásico "0001 · VER 01".
-  if(unidad==='ventas'){
-    const nro = (seq!=null) ? String(seq).padStart(4,'0') : '(sin asignar)';
-    return `OE-${nro}-${ver}`;
-  }
+  const u = (unidad==='ventas') ? 'V' : 'R';
   const nro = (seq!=null) ? String(seq).padStart(4,'0') : '(sin asignar)';
-  return `${nro} · VER ${ver}`;
+  return `OE-${u}-${nro}-${ver}`;
 }
 function rowToQuote(r){
   return {
@@ -1396,7 +1397,15 @@ function rowQuote(x, o){
 
 // Número de oferta sin el sufijo de versión (para la fila principal del grupo)
 function refBase(x){
-  const m = /^([0-9]{3,})/.exec(String(x.ref||''));
+  const s = String(x.ref||'');
+  // Nuevo formato: "OE-R-0001-02" → base "OE-R-0001"
+  let m = /^(OE-[RV]-\d+)-\d+/i.exec(s);
+  if(m) return m[1];
+  // Formatos viejos que arrancan con dígitos: "0001 · VER 02" → "0001"
+  m = /^([0-9]{3,})/.exec(s);
+  if(m) return m[1];
+  // Ventas intermedio: "OE-0001-02" → "OE-0001"
+  m = /^(OE-\d+)-\d+/i.exec(s);
   if(m) return m[1];
   return (x.seq!=null) ? String(x.seq).padStart(4,'0') : esc(x.ref);
 }
@@ -3904,7 +3913,7 @@ async function saveQuote(opts){
       // Cotización nueva: pedir número de oferta atómico a Supabase
       CUR.state = opts.state || 'borrador';
       if(!CUR.seq){
-        CUR.seq = await SB.nextSeq();          // incremento atómico (no se pisa entre usuarios)
+        CUR.seq = await SB.nextSeq(CUR.unidad);  // serie correlativa propia de la unidad
         CUR.ref = refStr(CUR.seq, CUR.version||1, CUR.unidad);
       }
       const row = await SB.addQuote(quoteToRow(CUR));
@@ -3954,10 +3963,10 @@ function sanitizeFile(s){
     .replace(/\s+/g,' ').trim();
 }
 function quoteFileName(){
-  const nro = String(CUR.seq).padStart(4,'0');
+  const base = refBase(CUR);              // OE-R-0001 / OE-V-4400
   const cli = sanitizeFile(CUR.client) || 'Cliente';
   const tip = sanitizeFile(quoteTipologia());
-  return `OE-${nro}-${cli}-${tip}`;
+  return `${base}-${cli}-${tip}`;
 }
 async function printQuote(){
   // Al generar el PDF, la cotización queda registrada en el CRM como ENVIADA
