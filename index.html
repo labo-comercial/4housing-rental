@@ -732,7 +732,16 @@ function quoteToRow(q){
     updated_at: new Date().toISOString()
   };
 }
-function parseVer(ref){ const m=/VER\s*0*([0-9]+)/i.exec(String(ref||'')); return m?parseInt(m[1],10):1; }
+function parseVer(ref){
+  const s = String(ref||'');
+  // Rental: "0001 · VER 02"  → captura el número tras "VER"
+  let m = /VER\s*0*([0-9]+)/i.exec(s);
+  if(m) return parseInt(m[1],10);
+  // Ventas: "OE-0001-02"     → captura el último grupo numérico (la versión)
+  m = /^OE-\d+-0*([0-9]+)/i.exec(s);
+  if(m) return parseInt(m[1],10);
+  return 1;
+}
 // Construye el número de referencia: "0001 · VER 01" (nº de oferta padStart 4 + versión padStart 2)
 function refStr(seq, version, unidad){
   const ver = String(version||1).padStart(2,'0');
@@ -3496,13 +3505,10 @@ async function newQuote(clientId, unidad){
     ivanote:ivaDefault('USD', unidad),
     state:'borrador', created:Date.now(), fromOppId:null,
   };
+  // El número de oferta NO se pide al abrir (evita huecos si se vuelve sin guardar).
+  // Se asigna recién al guardar (ver saveQuote).
+  CUR.ref = '(se asigna al guardar)';
   renderEditor(true);
-  // Asigna el número de oferta apenas se crea (se ve en preview y PDF desde el inicio)
-  try{
-    CUR.seq = await SB.nextSeq();
-    CUR.ref = refStr(CUR.seq, CUR.version||1, CUR.unidad);
-    renderEditor(true);
-  }catch(e){ CUR.ref='(sin asignar)'; renderEditor(true); toast('No se pudo asignar el número: '+e.message); }
 }
 
 // Abre el cotizador precargado con los datos de una oportunidad de rental.
@@ -3524,13 +3530,11 @@ async function cotizarOportunidad(oppId){
     ivanote:ivaDefault('USD', unidad),
     state:'borrador', created:Date.now(), fromOppId:oppId,
   };
+  // El número de oferta NO se pide al abrir (evita huecos si se vuelve sin guardar).
+  // Se asigna recién al guardar (ver saveQuote).
+  CUR.ref = '(se asigna al guardar)';
   closeModal();
   renderEditor(true);
-  try{
-    CUR.seq = await SB.nextSeq();
-    CUR.ref = refStr(CUR.seq, CUR.version||1, CUR.unidad);
-    renderEditor(true);
-  }catch(e){ CUR.ref='(sin asignar)'; renderEditor(true); toast('No se pudo asignar el número: '+e.message); }
 }
 // Abre la cotización vinculada a una oportunidad
 function abrirCotizacionDeOpp(oppId){
@@ -3879,10 +3883,10 @@ function fitPreview(){
 /* ---- save / print ---- */
 async function saveQuote(opts){
   opts = opts || {};
-  CUR.client = document.getElementById('e_clientname') ? val('e_clientname').trim() : CUR.client;
-  // Rental: el nombre del cliente se guarda SIEMPRE en mayúscula
-  if(CUR.client) CUR.client = upperName(CUR.client);
   try{
+    CUR.client = document.getElementById('e_clientname') ? val('e_clientname').trim() : CUR.client;
+    // Rental: el nombre del cliente se guarda SIEMPRE en mayúscula
+    if(CUR.client) CUR.client = upperName(CUR.client);
     // Si el cliente escrito no existe en la base, crearlo y vincularlo
     if(CUR.client){
       const existeCliente = DB.clients.find(c=> c.name.trim().toLowerCase() === CUR.client.toLowerCase());
