@@ -73,7 +73,10 @@ table.grid{width:100%;border-collapse:collapse;font-size:13.5px;}
 table.grid th{text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:11px 16px;border-bottom:1px solid var(--line);background:#faf9f4;}
 table.grid th.r,table.grid td.r{text-align:right;}
 table.grid th.c,table.grid td.c{text-align:center;}
-table.grid td{padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:middle;}
+table.grid td{padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap;}
+/* Celdas de texto largo: no parten a otra línea, recortan con elipsis. */
+table.grid td.wrap{white-space:normal;}
+table.grid td.ellip{max-width:260px;overflow:hidden;text-overflow:ellipsis;}
 table.grid tbody tr:last-child td{border-bottom:none;}
 table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
 table.grid th.th-sort{cursor:pointer;user-select:none;white-space:nowrap;}
@@ -189,6 +192,12 @@ tr.ver-child.hide{display:none;}
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px;}
 /* KPI cards (panel) */
 .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px;}
+/* Distribución homogénea: cuando la cantidad no llena filas de 4, se usa
+   una grilla que reparte parejo (5 col para 10 KPIs, etc.) vía clases. */
+.kpi-grid.cols-5{grid-template-columns:repeat(5,1fr);}
+.kpi-grid.cols-3{grid-template-columns:repeat(3,1fr);}
+.kpi-grid.centered{justify-content:center;}
+.kpi-grid.centered .kpi{max-width:none;}
 .kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 16px 14px;cursor:pointer;transition:.15s;}
 .kpi:hover{border-color:var(--olive);box-shadow:0 4px 16px rgba(95,122,78,.12);transform:translateY(-1px);}
 .kpi.kpi-active{border-color:var(--olive-deep);box-shadow:0 0 0 2px rgba(95,122,78,.25);}
@@ -1124,6 +1133,7 @@ VIEWS.dashboard = function(){
   // lista filtrada abajo
   let listed = [...q].sort((a,b)=>b.created-a.created);
   let listTitle = 'Cotizaciones recientes';
+  if(filtroVendedor) listed = listed.filter(x=>x.comercial===filtroVendedor);
   if(dashFilter){
     const c = cards.find(x=>x.key===dashFilter.key);
     if(c && typeof c.fn==='function'){
@@ -1137,19 +1147,25 @@ VIEWS.dashboard = function(){
   }
 
   C().innerHTML = `
-    <div class="kpi-grid">${cardHTML}</div>
-    <div class="card">
-      <div class="card-h"><h3>${esc(listTitle)}</h3>
-        <div style="display:flex;gap:8px">
-          ${dashFilter?`<button class="btn ghost sm" onclick="dashSelect(null)">Ver recientes</button>`:''}
-          <button class="btn sm" onclick="newQuote()">${ICO.plus} Nueva cotización</button>
+    <div class="kpi-grid cols-5">${cardHTML}</div>
+    <div class="card"><div class="card-b" style="padding:0">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line)">
+        <div>
+          <div style="font-size:15px;font-weight:700;color:#37432c">${esc(listTitle)}</div>
+          <div class="help" style="margin-top:3px">${dashFilter?'Tocá de nuevo el indicador para quitar el filtro':'Últimas cotizaciones de la unidad Rental'}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          ${vendedorFilterSelect('dVend')}
+          ${dashFilter?`<button class="btn ghost" onclick="dashSelect(null)">Ver recientes</button>`:''}
+          <button class="btn" onclick="newQuote()">${ICO.plus} Nueva cotización</button>
         </div>
       </div>
       ${listed.length? `<table class="grid">
         <thead><tr><th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th><th>Estado</th><th class="r">Total</th><th class="r">Fecha</th></tr></thead>
         <tbody>${groupQuotes(listed).map(rowGroupDash).join('')}</tbody></table>`
         : emptyState('Sin cotizaciones','No hay cotizaciones para este indicador.')}
-    </div>`;
+    </div></div>`;
+  { const v=document.getElementById('dVend'); if(v) v.onchange=()=>{ filtroVendedor=v.value; VIEWS.dashboard(); }; }
 };
 function dashSelect(key){
   if(!key || (dashFilter && dashFilter.key===key)) dashFilter=null;
@@ -2014,7 +2030,7 @@ VIEWS.opps = function(){
 };
 
 function rowOpp(o){
-  const unidadTag = o.unidad==='ventas' ? '<span class="help" style="font-size:10px"> · Ventas</span>' : '';
+  const unidadTag = `<span class="help" style="font-size:10px"> · ${o.unidad==='ventas'?'Ventas':o.unidad==='ambas'?'Ambas':'Rental'}</span>`;
   const valor = o.valor!=null ? `${o.moneda==='ARS'?'$':'USD'} ${fmt(o.valor)}` : '—';
   let ppChip='';
   if(o.proximoPaso){
@@ -2085,14 +2101,14 @@ function auditRowHtml(row, clickable){
     const link = info.abrir
       ? `<a href="#" onclick="closeModal&&closeModal();${info.abrir};return false" style="color:#5f7a4e;font-weight:600;text-decoration:none">${esc(info.nombre)} ↗</a>`
       : `<span style="color:#37432c">${esc(info.nombre)}</span>`;
-    regCell = `<td style="font-size:12px">${esc(tabla)}<br>${link}</td>`;
+    regCell = `<td class="wrap" style="font-size:12px">${esc(tabla)}<br>${link}</td>`;
   }
   return `<tr>
     <td style="white-space:nowrap;font-size:12px">${fecha}</td>
     <td style="font-size:12px;color:var(--muted)">${esc(usuario)}</td>
     ${clickable ? regCell : `<td style="font-size:12px">${esc(tabla)} · ${op}</td>`}
     <td style="font-size:12px">${op}</td>
-    <td>${diff||'<span class="help" style="font-size:11px">—</span>'}</td>
+    <td class="wrap">${diff||'<span class="help" style="font-size:11px">—</span>'}</td>
   </tr>`;
 }
 async function openAuditModal(tabla, regId, titulo){
@@ -2649,7 +2665,7 @@ VIEWS.dashboard_ventas = function(){
       ${kpiCard('Cotizadas (mes)', k.cotizadasMes, 20, 'Generadas este mes · obj. 20')}
       ${kpiCard('Ganadas (mes)', k.ganadasMes, 2, 'Cerradas con éxito · obj. 2', {onclick:"toggleVentasFiltro('ganada')", active:f==='ganada'})}
       ${kpiCard('Conversión', k.conv, 10, 'Ganadas / cerradas · obj. 10%', {pct:true})}
-      ${card('Pipeline', (k.pipeline?('USD '+fmt(k.pipeline)):'—'), 'Valor estimado en juego (USD)')}
+      ${kpiCard('Pipeline', (k.pipeline?('USD '+fmt(k.pipeline)):'—'), 0, 'Valor estimado en juego (USD)')}
     </div>
     <div class="card"><div class="card-b" style="padding:0">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line)">
