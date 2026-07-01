@@ -477,6 +477,10 @@ textarea.inp{resize:vertical;min-height:60px;}
         Cobranzas
       </button>
       <div class="nav-group-lbl">Comercial</div>
+      <button class="navbtn" data-view="opps">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="4" height="16" rx="1"/><rect x="10" y="4" width="4" height="11" rx="1"/><rect x="17" y="4" width="4" height="7" rx="1"/></svg>
+        Oportunidades
+      </button>
       <button class="navbtn" data-view="prosp">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/><path d="M11 8v6M8 11h6"/></svg>
         Prospección
@@ -2034,6 +2038,26 @@ function rowOpp(o){
 const AUDIT_TABLA_LBL = { oportunidades:'Oportunidad', cotizaciones:'Cotización', pedidos:'Pedido', facturas:'Factura' };
 const AUDIT_OP_LBL = { INSERT:'Creado', UPDATE:'Modificado', DELETE:'Eliminado' };
 
+// Resuelve, a partir de la tabla + id del log, un nombre legible del registro
+// y una función para abrirlo (si la app sabe cómo). Usa la data en memoria.
+function auditRegistroInfo(tabla, regId){
+  if(tabla==='oportunidades'){
+    const o = DB.opps.find(x=>x.id===regId);
+    if(o) return { nombre:(o.ref?o.ref+' · ':'')+oppClientName(o), abrir:`openOpp('${regId}')` };
+  }
+  if(tabla==='cotizaciones'){
+    const q = DB.quotes.find(x=>x.id===regId);
+    if(q){ const cli = q.clientId ? (DB.clients.find(c=>c.id===q.clientId)||{}).name : (q.client||'');
+      return { nombre:(q.ref?q.ref+(cli?' · '+cli:''):regId), abrir:`editQuote('${regId}')` }; }
+  }
+  if(tabla==='facturas'){
+    const f = (DB.cobranzas||[]).find(x=>x.id===regId);
+    if(f) return { nombre:(f.ref||f.factura||regId), abrir:null };
+  }
+  // sin match (registro borrado, o tabla sin data en memoria)
+  return { nombre:'#'+String(regId).slice(0,8), abrir:null };
+}
+
 // Convierte el diff (jsonb con {campo:{old,new}}) en filas legibles.
 function auditDiffText(row){
   const d = row.diff || row.cambios || null;
@@ -2048,16 +2072,26 @@ function auditDiffText(row){
     return `<span class="help" style="font-size:11px"><code style="background:#f0efe6;padding:1px 5px;border-radius:4px">${esc(c)}</code> <span style="color:#a3573d;text-decoration:line-through">${o}</span> → <span style="color:#5f7a4e;font-weight:600">${n}</span></span>`;
   }).join('<br>');
 }
-function auditRowHtml(row){
+// clickable=true agrega la columna Registro con enlace (para la vista global).
+function auditRowHtml(row, clickable){
   const fecha = row.cambiado_en ? new Date(row.cambiado_en).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
   const tabla = AUDIT_TABLA_LBL[row.tabla]||row.tabla;
   const op = AUDIT_OP_LBL[row.operacion]||row.operacion;
   const usuario = row.usuario || row.usuario_email || '—';
   const diff = auditDiffText(row);
+  let regCell = '';
+  if(clickable){
+    const info = auditRegistroInfo(row.tabla, row.registro_id);
+    const link = info.abrir
+      ? `<a href="#" onclick="closeModal&&closeModal();${info.abrir};return false" style="color:#5f7a4e;font-weight:600;text-decoration:none">${esc(info.nombre)} ↗</a>`
+      : `<span style="color:#37432c">${esc(info.nombre)}</span>`;
+    regCell = `<td style="font-size:12px">${esc(tabla)}<br>${link}</td>`;
+  }
   return `<tr>
     <td style="white-space:nowrap;font-size:12px">${fecha}</td>
     <td style="font-size:12px;color:var(--muted)">${esc(usuario)}</td>
-    <td style="font-size:12px">${esc(tabla)} · ${op}</td>
+    ${clickable ? regCell : `<td style="font-size:12px">${esc(tabla)} · ${op}</td>`}
+    <td style="font-size:12px">${op}</td>
     <td>${diff||'<span class="help" style="font-size:11px">—</span>'}</td>
   </tr>`;
 }
@@ -2067,7 +2101,7 @@ async function openAuditModal(tabla, regId, titulo){
   try{
     const rows = await SB.auditDeRegistro(tabla, regId);
     const body = rows.length
-      ? `<table class="grid"><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Cambio</th></tr></thead><tbody>${rows.map(auditRowHtml).join('')}</tbody></table>`
+      ? `<table class="grid"><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Cambio</th></tr></thead><tbody>${rows.map(r=>auditRowHtml(r,false)).join('')}</tbody></table>`
       : '<div class="help" style="padding:20px">Sin cambios registrados todavía para este registro.</div>';
     openModal(titulo||'Historial de cambios', body, `<button class="btn ghost" onclick="closeModal()">Cerrar</button>`);
   }catch(e){
@@ -2081,7 +2115,7 @@ VIEWS.audit = async function(){
     const rows = await SB.listAudit(150);
     C().innerHTML = `<div class="card"><div class="card-b" style="padding:0">
       ${rows.length
-        ? `<table class="grid"><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Cambio</th></tr></thead><tbody>${rows.map(auditRowHtml).join('')}</tbody></table>`
+        ? `<table class="grid"><thead><tr><th>Fecha</th><th>Usuario</th><th>Registro</th><th>Acción</th><th>Cambio</th></tr></thead><tbody>${rows.map(r=>auditRowHtml(r,true)).join('')}</tbody></table>`
         : '<div class="empty" style="padding:40px">Sin cambios registrados todavía. El historial se llena automáticamente a medida que el equipo edita oportunidades, cotizaciones, pedidos y facturas.</div>'}
     </div></div>`;
   }catch(e){
