@@ -69,23 +69,16 @@ a{color:var(--olive-deep);}
 .card-h h3{margin:0;font-size:15px;font-weight:700;letter-spacing:.01em;}
 .card-b{padding:18px 20px;}
 
-table.grid{width:100%;border-collapse:collapse;font-size:13.5px;table-layout:fixed;}
-/* Tablas anchas con scroll propio: mantienen layout automático. */
-table.grid.auto{table-layout:auto;}
-table.grid th{text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:11px 16px;border-bottom:1px solid var(--line);background:#faf9f4;}
+table.grid{width:100%;border-collapse:collapse;font-size:13.5px;}
+table.grid th{text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:11px 16px;border-bottom:1px solid var(--line);background:#faf9f4;white-space:nowrap;}
 table.grid th.r,table.grid td.r{text-align:right;}
 table.grid th.c,table.grid td.c{text-align:center;}
-/* Por defecto: una sola línea, recorta con "…" si no entra (nunca desborda). */
-table.grid td{padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-table.grid th{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-/* Celdas que sí pueden usar varias líneas (ej. detalle de cambios). */
-table.grid td.wrap{white-space:normal;overflow:visible;text-overflow:clip;}
-/* Anchos orientativos: la columna Cliente/Detalle se lleva el espacio sobrante,
-   las cortas (estado, fecha, prioridad, valor) quedan compactas. */
-table.grid col.col-wide{width:auto;}
-table.grid col.col-sm{width:110px;}
-table.grid col.col-md{width:140px;}
-table.grid col.col-num{width:120px;}
+/* Contenido completo: si no entra, pasa a un segundo renglón. Alineación
+   superior para que las filas queden prolijas cuando alguna celda crece. */
+table.grid td{padding:13px 16px;border-bottom:1px solid var(--line);vertical-align:top;word-break:break-word;}
+/* Celdas cortas que no deben partirse (fechas, importes, estados). */
+table.grid td.nowrap{white-space:nowrap;}
+table.grid td.wrap{white-space:normal;}
 table.grid tbody tr:last-child td{border-bottom:none;}
 table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
 table.grid th.th-sort{cursor:pointer;user-select:none;white-space:nowrap;}
@@ -1170,7 +1163,6 @@ VIEWS.dashboard = function(){
         </div>
       </div>
       ${listed.length? `<table class="grid">
-        <colgroup><col class="col-md"><col class="col-wide"><col class="col-md"><col class="col-md"><col class="col-md"><col class="col-num"><col class="col-md"></colgroup>
         <thead><tr><th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th><th>Estado</th><th class="r">Total</th><th class="r">Fecha</th></tr></thead>
         <tbody>${groupQuotes(listed).map(rowGroupDash).join('')}</tbody></table>`
         : emptyState('Sin cotizaciones','No hay cotizaciones para este indicador.')}
@@ -1196,13 +1188,13 @@ function rowQuoteDash(x, o){
   const ver = x.version || parseVer(x.ref) || 1;
   if(o.child){
     return `<tr class="clickable ver-child ${o.hidden?'hide':''}" data-key="${o.groupKey}" onclick="editQuote('${x.id}')">
-      <td><span class="ver-tag">VER${String(ver).padStart(2,'0')}</span></td>
+      <td class="nowrap"><span class="ver-tag">VER${String(ver).padStart(2,'0')}</span></td>
       <td>${esc(upperName(x.client)||'—')}</td>
       <td>${esc(titleCase(x.attn)||'—')}</td>
       <td>${esc(titleCase(x.comercial)||'—')}</td>
-      <td><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
-      <td class="r"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
-      <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+      <td class="nowrap"><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
+      <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
+      <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
     </tr>`;
   }
   const refCell = o.multi
@@ -1211,13 +1203,13 @@ function rowQuoteDash(x, o){
        </span>`
     : `<b>${esc(x.ref)}</b>`;
   return `<tr class="clickable ${o.multi?'ver-main ver-grp':''} ${o.open?'open':''}" ${o.multi?`data-key="${o.groupKey}"`:''} onclick="editQuote('${x.id}')">
-    <td>${refCell}${o.multi?`<span class="ver-badge">VER${String(ver).padStart(2,'0')}</span>`:''}</td>
+    <td class="nowrap">${refCell}${o.multi?`<span class="ver-badge">VER${String(ver).padStart(2,'0')}</span>`:''}</td>
     <td>${esc(upperName(x.client)||'—')}</td>
     <td>${esc(titleCase(x.attn)||'—')}</td>
     <td>${esc(titleCase(x.comercial)||'—')}</td>
-    <td><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
-    <td class="r"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
-    <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+    <td class="nowrap"><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
+    <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
+    <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
   </tr>`;
 }
 function emptyState(t,s){
@@ -1310,7 +1302,6 @@ VIEWS.quotes = function(){
     </div>
     <div class="card">
       ${hayAlgo? `<table class="grid">
-        <colgroup><col class="col-md"><col class="col-wide"><col class="col-md"><col class="col-md"><col class="col-md"><col class="col-num"><col class="col-md"><col class="col-sm"></colgroup>
         <thead><tr>
           ${sortTh('Ref.','ref','quoteSort','VIEWS.quotes')}
           ${sortTh('Cliente','client','quoteSort','VIEWS.quotes')}
@@ -1349,13 +1340,13 @@ VIEWS.quotes = function(){
 function rowOppRental(o){
   const estadoSel = STATES.map(s=>`<option value="${s.id}" ${s.id===o.state?'selected':''}>${s.label}</option>`).join('');
   return `<tr class="opp-row clickable" data-id="${o.id}">
-    <td><strong>${esc(o.ref||'—')}</strong> <span class="help" style="font-size:10px">oportunidad</span></td>
+    <td class="nowrap"><strong>${esc(o.ref||'—')}</strong> <span class="help" style="font-size:10px">oportunidad</span></td>
     <td>${esc(upperName(oppClientName(o)))}</td>
     <td>${esc(titleCase(o.title)||'—')}</td>
     <td>${esc(titleCase(o.comercial)||'—')}</td>
-    <td><select class="state-sel opp-state-sel" data-oid="${o.id}" onclick="event.stopPropagation()">${estadoSel}</select></td>
-    <td class="r">${o.valor!=null?('$ '+fmt(o.valor)):'—'}</td>
-    <td class="r">${o.fechaLimite?fmtFecha(o.fechaLimite):new Date(o.created).toLocaleDateString('es-AR')}</td>
+    <td class="nowrap"><select class="state-sel opp-state-sel" data-oid="${o.id}" onclick="event.stopPropagation()">${estadoSel}</select></td>
+    <td class="r nowrap">${o.valor!=null?('$ '+fmt(o.valor)):'—'}</td>
+    <td class="r nowrap">${o.fechaLimite?fmtFecha(o.fechaLimite):new Date(o.created).toLocaleDateString('es-AR')}</td>
     <td></td>
   </tr>`;
 }
@@ -1400,16 +1391,16 @@ function rowQuote(x, o){
   // ----- Sub-fila (versión anterior dentro de un grupo desplegado) -----
   if(o.child){
     return `<tr class="clickable ver-child ${o.hidden?'hide':''}" data-key="${o.groupKey}" onclick="editQuote('${x.id}')">
-      <td><span class="ver-tag">VER${String(ver).padStart(2,'0')}</span></td>
+      <td class="nowrap"><span class="ver-tag">VER${String(ver).padStart(2,'0')}</span></td>
       <td>${esc(upperName(x.client)||'—')}</td>
       <td>${esc(titleCase(x.attn)||'—')}</td>
       <td>${esc(titleCase(x.comercial)||'—')}</td>
-      <td onclick="event.stopPropagation()">
+      <td class="nowrap" onclick="event.stopPropagation()">
         <span class="badge st-${x.state}">${stLabel(x.state)}</span>
         <select class="state-sel" data-id="${x.id}" title="Cambiar estado">${opts}</select>
       </td>
-      <td class="r"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
-      <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+      <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
+      <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
       <td></td>
     </tr>`;
   }
@@ -1423,17 +1414,17 @@ function rowQuote(x, o){
        </span>${origenTag}`
     : `<b>${esc(x.ref)}</b>${origenTag}`;
   return `<tr class="clickable ${o.multi?'ver-main ver-grp':''} ${o.open?'open':''}" ${o.multi?`data-key="${o.groupKey}"`:''} onclick="editQuote('${x.id}')">
-    <td>${refCell}${o.multi?`<span class="ver-badge">VER${String(ver).padStart(2,'0')}</span>`:''}</td>
+    <td class="nowrap">${refCell}${o.multi?`<span class="ver-badge">VER${String(ver).padStart(2,'0')}</span>`:''}</td>
     <td>${esc(upperName(x.client)||'—')}</td>
     <td>${esc(titleCase(x.attn)||'—')}</td>
     <td>${esc(titleCase(x.comercial)||'—')}</td>
-    <td onclick="event.stopPropagation()">
+    <td class="nowrap" onclick="event.stopPropagation()">
       <span class="badge st-${x.state}">${stLabel(x.state)}</span>
       <select class="state-sel" data-id="${x.id}" title="Cambiar estado">${opts}</select>
     </td>
-    <td class="r"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
-    <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
-    <td onclick="event.stopPropagation()" style="text-align:right;white-space:nowrap">
+    <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
+    <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+    <td class="nowrap" onclick="event.stopPropagation()" style="text-align:right">
       <button class="btn sm ghost" title="Crear nueva versión (misma referencia)" onclick="newVersion('${x.id}')">${ICO.copy} Versión</button>
     </td>
   </tr>`;
@@ -1582,7 +1573,7 @@ VIEWS.clients = function(){
     </div>
     <div class="toolbar"><div class="search">${ICO.search}<input id="cSearch" placeholder="Buscar por empresa, CUIT, contacto, email…" value="${esc(clientSearch)}"></div>${fa?`<button class="btn ghost sm" onclick="toggleClientAlta('${fa}')">Quitar filtro: ${ALTA_LBL[fa]}</button>`:''}</div>
     <div class="card">
-      ${list.length? `<div style="overflow-x:auto"><table class="grid auto" style="min-width:1080px">
+      ${list.length? `<div style="overflow-x:auto"><table class="grid" style="min-width:900px">
         <thead><tr>
           ${sortTh('Cliente','name','clientSort','VIEWS.clients')}
           ${sortTh('CUIT','cuit','clientSort','VIEWS.clients')}
@@ -2005,7 +1996,6 @@ VIEWS.opps = function(){
         : `<div class="empty" style="padding:40px">No hay oportunidades${oppFilters.unidad||oppFilters.prioridad?' con estos filtros':''}.</div>`)
     : `<div class="card"><div class="card-b" style="padding:0">
         ${list.length ? `<table class="grid">
-          <colgroup><col class="col-md"><col class="col-wide"><col class="col-md"><col class="col-sm"><col class="col-md"><col class="col-md"><col class="col-num"></colgroup>
           <thead><tr>
             ${sortTh('Ref.','ref','oppSort','VIEWS.opps')}
             ${sortTh('Cliente / Organismo','client','oppSort','VIEWS.opps')}
@@ -2051,13 +2041,13 @@ function rowOpp(o){
     ppChip = `<span title="${esc(o.proximoPaso)}" style="display:inline-block;margin-left:6px;width:7px;height:7px;border-radius:50%;background:${color};vertical-align:middle"></span>`;
   }
   return `<tr class="clickable" data-id="${o.id}">
-    <td><strong>${esc(o.ref||'—')}</strong>${unidadTag}</td>
+    <td class="nowrap"><strong>${esc(o.ref||'—')}</strong>${unidadTag}</td>
     <td>${esc(upperName(oppClientName(o)))}</td>
     <td>${esc(titleCase(o.tipo)||'—')}</td>
-    <td><span class="badge pr-${o.prioridad}">${OPP_PRIO_LBL[o.prioridad]||o.prioridad}</span></td>
-    <td><span class="badge os-${o.state}">${OPP_ESTADO_LBL[o.state]||o.state}</span></td>
-    <td>${fmtFecha(o.fechaLimite)}${ppChip}</td>
-    <td class="r">${valor}</td>
+    <td class="nowrap"><span class="badge pr-${o.prioridad}">${OPP_PRIO_LBL[o.prioridad]||o.prioridad}</span></td>
+    <td class="nowrap"><span class="badge os-${o.state}">${OPP_ESTADO_LBL[o.state]||o.state}</span></td>
+    <td class="nowrap">${fmtFecha(o.fechaLimite)}${ppChip}</td>
+    <td class="r nowrap">${valor}</td>
   </tr>`;
 }
 
@@ -2143,7 +2133,7 @@ VIEWS.audit = async function(){
     const rows = await SB.listAudit(150);
     C().innerHTML = `<div class="card"><div class="card-b" style="padding:0">
       ${rows.length
-        ? `<table class="grid"><colgroup><col class="col-md"><col class="col-md"><col class="col-md"><col class="col-sm"><col class="col-wide"></colgroup><thead><tr><th>Fecha</th><th>Usuario</th><th>Registro</th><th>Acción</th><th>Cambio</th></tr></thead><tbody>${rows.map(r=>auditRowHtml(r,true)).join('')}</tbody></table>`
+        ? `<table class="grid"><thead><tr><th>Fecha</th><th>Usuario</th><th>Registro</th><th>Acción</th><th>Cambio</th></tr></thead><tbody>${rows.map(r=>auditRowHtml(r,true)).join('')}</tbody></table>`
         : '<div class="empty" style="padding:40px">Sin cambios registrados todavía. El historial se llena automáticamente a medida que el equipo edita oportunidades, cotizaciones, pedidos y facturas.</div>'}
     </div></div>`;
   }catch(e){
@@ -2581,7 +2571,6 @@ VIEWS.ventas = function(){
     </div>
     <div class="card">
       ${hayAlgo? `<table class="grid">
-        <colgroup><col class="col-md"><col class="col-wide"><col class="col-md"><col class="col-md"><col class="col-md"><col class="col-num"><col class="col-md"><col class="col-sm"></colgroup>
         <thead><tr>
           ${sortTh('Ref.','ref','ventasSort','VIEWS.ventas')}
           ${sortTh('Cliente','client','ventasSort','VIEWS.ventas')}
@@ -2689,7 +2678,6 @@ VIEWS.dashboard_ventas = function(){
         <button class="btn" onclick="newOppVentas()">${ICO.plus} Nueva oportunidad</button>
       </div>
       ${list.length ? `<table class="grid">
-          <colgroup><col class="col-md"><col class="col-wide"><col class="col-md"><col class="col-sm"><col class="col-md"><col class="col-md"><col class="col-num"></colgroup>
           <thead><tr><th>Ref.</th><th>Cliente / Organismo</th><th>Tipo</th><th>Prioridad</th><th>Estado</th><th>Fecha límite</th><th class="r">Valor</th></tr></thead>
           <tbody>${list.map(rowOpp).join('')}</tbody></table>`
         : `<div class="empty" style="padding:40px">No hay oportunidades${f?' con este filtro':' de ventas todavía'}.</div>`}
@@ -3389,7 +3377,7 @@ VIEWS.cobranzas = function(){
       <span class="help" style="margin-left:auto">${list.length} ${list.length===1?'cobranza':'cobranzas'}</span>
     </div>
     <div class="card"><div class="card-b" style="padding:0">
-      ${list.length ? `<div style="overflow-x:auto"><table class="grid auto" style="min-width:820px">
+      ${list.length ? `<div style="overflow-x:auto"><table class="grid" style="min-width:760px">
         <thead><tr>
           <th></th><th>Ref.</th><th>Cliente</th><th>Unidad</th><th>Factura</th><th class="c">Días</th>
           <th class="r">Total</th><th class="r">Saldo</th><th>Estado</th>
@@ -3421,15 +3409,15 @@ function rowCobranza(c){
     ? `${esc(c.facturaNro)}${c.facturaFecha?`<br><span class="help">${new Date(c.facturaFecha+'T00:00:00').toLocaleDateString('es-AR')}</span>`:''}`
     : '<span class="help">—</span>';
   return `<tr class="clickable" data-id="${c.id}">
-    <td><span class="sem sem-${sem}" title="${sem}"></span></td>
-    <td><strong>${esc(c.ref||'—')}</strong></td>
+    <td class="nowrap"><span class="sem sem-${sem}" title="${sem}"></span></td>
+    <td class="nowrap"><strong>${esc(c.ref||'—')}</strong></td>
     <td>${esc(upperName(c.razonSocial)||'—')}<br><span class="help">${esc(c.cuit||'')}</span></td>
-    <td><span class="badge un-${cobUnidad(c)}">${COB_UNIDAD_LBL[cobUnidad(c)]||cobUnidad(c)}</span></td>
-    <td style="font-size:12px">${facturaTxt}</td>
-    <td class="c" style="font-weight:600;color:${sem==='rojo'?'#b0584f':(sem==='amarillo'?'#b3853a':'#37432c')}">${diasTxt}</td>
-    <td class="r">${sym} ${fmt(cobTotal(c))}</td>
-    <td class="r" style="color:${saldo>0?'#b3853a':'#4f8a53'};font-weight:700">${sym} ${fmt(saldo)}</td>
-    <td><span class="badge cob-${est}">${COB_ESTADO_LBL[est]}</span></td>
+    <td class="nowrap"><span class="badge un-${cobUnidad(c)}">${COB_UNIDAD_LBL[cobUnidad(c)]||cobUnidad(c)}</span></td>
+    <td class="nowrap" style="font-size:12px">${facturaTxt}</td>
+    <td class="c nowrap" style="font-weight:600;color:${sem==='rojo'?'#b0584f':(sem==='amarillo'?'#b3853a':'#37432c')}">${diasTxt}</td>
+    <td class="r nowrap">${sym} ${fmt(cobTotal(c))}</td>
+    <td class="r nowrap" style="color:${saldo>0?'#b3853a':'#4f8a53'};font-weight:700">${sym} ${fmt(saldo)}</td>
+    <td class="nowrap"><span class="badge cob-${est}">${COB_ESTADO_LBL[est]}</span></td>
   </tr>`;
 }
 
